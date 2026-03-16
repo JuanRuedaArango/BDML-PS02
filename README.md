@@ -8,6 +8,6 @@ El flujo de trabajo cubre la limpieza y construcción de variables a nivel de ho
 
 ## Autores
 
-Hernán Yepes, Juan Rueda, Andrés Suárez
+Juan Rueda, Andrés Suárez, Hernán Yepes
 
 Big Data y Machine Learning – Universidad de Los Andes – 2026

@@ -45,7 +45,10 @@ required_packages <- c(
   "readr",
   "readxl",
   "arrow",
-  "jsonlite"
+  "jsonlite",
+  "pROC",
+  "Metrics",
+  "rio"
   
 )
 

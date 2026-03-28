@@ -257,31 +257,260 @@ convert_factors <- function(data, is_train = TRUE) {
 }
 
 # ------------------------------------------------------------
+# prepare_train_test_factors()
+# ------------------------------------------------------------
+# Objetivo:
+#   Aplicar de forma consistente la conversión de factores en
+#   train y test, asegurando que test use los mismos niveles
+#   de Dominio y cat_educHead que train.
+#
+# Entrada:
+#   - train: base de entrenamiento
+#   - test : base de prueba
+#
+# Salida:
+#   Una lista con:
+#   - train
+#   - test
+# ------------------------------------------------------------
+prepare_train_test_factors <- function(train, test) {
+  
+  cat_educ_labels <- c(
+    "0" = "No sabe",
+    "1" = "Ninguno",
+    "2" = "Preescolar",
+    "3" = "Primaria",
+    "4" = "Secundaria",
+    "5" = "Media",
+    "6" = "Universitaria"
+  )
+  
+  train <- train %>%
+    mutate(
+      Pobre = factor(Pobre, levels = c("Yes", "No")),
+      Dominio = factor(Dominio),
+      cat_educHead = case_when(
+        cat_educHead %in% c("No sabe", "Preescolar") ~ "Ninguno",
+        TRUE ~ cat_educHead
+      ),
+      cat_educHead = factor(
+        cat_educHead,
+        levels = c("Ninguno", "Primaria", "Secundaria", "Media", "Universitaria")
+      )
+    )
+  
+  test <- test %>%
+    mutate(
+      Dominio = factor(Dominio, levels = levels(train$Dominio)),
+      cat_educHead = recode(as.character(cat_educHead), !!!cat_educ_labels),
+      cat_educHead = case_when(
+        cat_educHead %in% c("No sabe", "Preescolar") ~ "Ninguno",
+        TRUE ~ cat_educHead
+      ),
+      cat_educHead = factor(cat_educHead, levels = levels(train$cat_educHead))
+    )
+  
+  list(
+    train = train,
+    test = test
+  )
+}
+
+
+# ------------------------------------------------------------
+# multiStats()
+# ------------------------------------------------------------
+# Objetivo:
+#   Calcular varias métricas de clasificación binaria al mismo
+#   tiempo durante el proceso de validación cruzada en caret.
+#
+# ¿Por qué sirve?
+#   Porque en lugar de ver solo una métrica, permite revisar
+#   simultáneamente desempeño desde distintos enfoques:
+#   - twoClassSummary: ROC, Sens, Spec
+#   - defaultSummary : Accuracy, Kappa
+#   - prSummary      : Precision, Recall, F
+#
+# Requisito importante:
+#   Para que funcione correctamente dentro de trainControl(),
+#   se debe usar:
+#   - classProbs = TRUE
+#   - summaryFunction = multiStats
+#
+# Además:
+#   La variable objetivo debe ser un factor de dos clases.
+# ------------------------------------------------------------
+multiStats <- function(...) {
+  c(
+    caret:::twoClassSummary(...),
+    caret:::defaultSummary(...),
+    caret:::prSummary(...)
+  )
+}
+
+# ------------------------------------------------------------
 # make_submission_name()
 # ------------------------------------------------------------
 # Objetivo:
 #   Construir automáticamente el nombre del archivo de envío
-#   usando los mejores hiperparámetros del modelo.
-#
-# Entrada:
-#   Un modelo entrenado con caret.
-#
-# ¿Qué hace?
-#   - Extrae bestTune$lambda
-#   - Extrae bestTune$alpha
-#   - Reemplaza puntos por guiones bajos para que el nombre del
-#     archivo sea más cómodo y consistente
-#
-# Ejemplo de salida:
-#   EN_lambda_0_0215_alpha_0_7.csv
+#   según el algoritmo o variante del modelo utilizado.
 #
 # ¿Por qué sirve?
-#   Porque así el archivo queda identificado con la combinación
-#   de hiperparámetros usada y no se sobreescribe tan fácilmente.
+#   Porque permite guardar cada predicción con un nombre
+#   informativo y consistente, incorporando los principales
+#   hiperparámetros del modelo (por ejemplo alpha, lambda y,
+#   cuando aplica, el threshold óptimo). Esto ayuda a:
+#   - diferenciar archivos de distintos modelos,
+#   - evitar sobreescrituras accidentales,
+#   - rastrear fácilmente con qué configuración se generó cada
+#     submission.
+#
+# Entrada:
+#   - best_algorithm:
+#       string que identifica el tipo de modelo o estrategia.
+#       Ejemplos:
+#       "Elastic Net con Accuracy"
+#       "Elastic Net con Sens"
+#       "Elastic Net weighted + threshold óptimo PR"
+#       "LDA"
+#       "QDA"
+#
+#   - model:
+#       objeto entrenado con caret, necesario para extraer
+#       bestTune$alpha y bestTune$lambda en los modelos que usan
+#       tuning.
+#
+#   - best_cutoff:
+#       data frame o lista con el threshold óptimo, usado solo en
+#       estrategias donde además del modelo se optimiza el punto
+#       de corte de clasificación.
+#
+# ¿Qué hace?
+#   1) Formatea los hiperparámetros numéricos para que puedan
+#      usarse en nombres de archivo (reemplaza "." por "_").
+#   2) Revisa qué tipo de algoritmo se está guardando.
+#   3) Construye un nombre de archivo coherente para esa
+#      estrategia.
+#
+# ¿Qué devuelve?
+#   Un string con el nombre final del archivo .csv.
+#
+# Ejemplos de salida:
+#   EN_Acc_lambda_0_001_alpha_0_5.csv
+#   EN_Sen_lambda_0_1_alpha_1.csv
+#   EN_weighted_PR_lambda_0_0316_alpha_0_7_threshold_0_242.csv
+#   LDA.csv
+#   QDA.csv
 # ------------------------------------------------------------
-make_submission_name <- function(model) {
-  lambda_str <- gsub("\\.", "_", as.character(round(model$bestTune$lambda, 4)))
-  alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+make_submission_name <- function(best_algorithm, model = NULL, best_cutoff = NULL) {
   
-  paste0("EN_lambda_", lambda_str, "_alpha_", alpha_str, ".csv")
+  format_param <- function(x, digits = 4) {
+    gsub("\\.", "_", as.character(round(x, digits)))
+  }
+  
+  if (best_algorithm == "Elastic Net con Accuracy") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_Acc_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net con Sens") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_Sen_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net weighted + threshold óptimo PR") {
+    
+    lambda_str    <- format_param(model$bestTune$lambda, 4)
+    alpha_str     <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    threshold_str <- format_param(best_cutoff$threshold, 3)
+    
+    submission_name <- paste0(
+      "EN_weighted_PR_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      "_threshold_", threshold_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net + threshold óptimo PR") {
+    
+    lambda_str    <- format_param(model$bestTune$lambda, 4)
+    alpha_str     <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    threshold_str <- format_param(best_cutoff$threshold, 3)
+    
+    submission_name <- paste0(
+      "EN_PR_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      "_threshold_", threshold_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net con F1") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_F1_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net + sample weighting") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_weighted_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net + downsampling") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_down_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "Elastic Net + upsampling") {
+    
+    lambda_str <- format_param(model$bestTune$lambda, 4)
+    alpha_str  <- gsub("\\.", "_", as.character(model$bestTune$alpha))
+    
+    submission_name <- paste0(
+      "EN_up_lambda_", lambda_str,
+      "_alpha_", alpha_str,
+      ".csv"
+    )
+    
+  } else if (best_algorithm == "LDA") {
+    
+    submission_name <- "LDA.csv"
+    
+  } else if (best_algorithm == "QDA") {
+    
+    submission_name <- "QDA.csv"
+    
+  } else {
+    stop("Algoritmo no reconocido en make_submission_name().")
+  }
+  
+  return(submission_name)
 }

@@ -246,7 +246,35 @@ cat("cat_educHead coincide:",
     all(niveles_educ[as.character(train_before_factors$cat_educHead)] == as.character(train$cat_educHead)), "\n\n")
 
 # ============================================================
-# 8.5 Limpiar objetos temporales de chequeo
+# 9. Conversión de variables categóricas
+# ============================================================
+factores_data <- prepare_train_test_factors(train, test)
+
+train <- factores_data$train
+test  <- factores_data$test
+
+# ---------------------Verificacion---------------------------
+
+# Ver estructura general
+str(train)
+str(test)
+
+# Verificar variable objetivo
+levels(train$Pobre)
+table(train$Pobre, useNA = "ifany")
+
+# Verificar alineación de factores
+# Dominio
+identical(levels(train$Dominio), levels(test$Dominio))
+# Educacion cabeza de hogar
+identical(levels(train$cat_educHead), levels(test$cat_educHead))
+
+# Verificar distribución de educación recodificada
+table(train$cat_educHead, useNA = "ifany")
+table(test$cat_educHead, useNA = "ifany")
+
+# ============================================================
+# 10. Limpiar objetos temporales de chequeo
 # ============================================================
 
 objetos_a_conservar <- c(

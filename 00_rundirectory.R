@@ -48,7 +48,8 @@ required_packages <- c(
   "jsonlite",
   "pROC",
   "Metrics",
-  "rio"
+  "rio",
+  "MLmetrics"
   
 )
 

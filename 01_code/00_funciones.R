@@ -318,6 +318,181 @@ prepare_train_test_factors <- function(train, test) {
 
 
 # ------------------------------------------------------------
+# build_features_hogar()
+# ------------------------------------------------------------
+# Objetivo:
+#   Construir ocho variables socioeconómicas a nivel hogar
+#   combinando la base cruda de personas y la de hogares.
+#
+# Entradas:
+#   - personas_raw : data frame crudo de personas del GEIH.
+#   - hogares_raw  : data frame crudo de hogares del GEIH.
+#
+# Variables que crea:
+#
+#   Desde personas_raw
+#   ------------------
+#   1) prop_dependiente
+#       (No PET + Inactivos en PET) / Total del hogar.
+#       PET = Población en Edad de Trabajar (≥12 años, DANE).
+#       No PET: menores de 12 años.
+#       Inactivos en PET: en edad de trabajar pero fuera de la
+#       PEA (ni ocupados ni desocupados).
+#       Si Des no existe en los datos los inactivos se aproximan
+#       como PET − Ocupados.
+#
+#   2) prop_informal
+#       Ocupados informales / Total ocupados del hogar.
+#       Informal = ocupado que no cotiza a pensión (P6920 != 1).
+#       Si no hay ocupados en el hogar se asigna 0.
+#
+#   3) mujer_jefe_ocup
+#       Dummy: 1 si la cabeza del hogar es mujer y está ocupada,
+#       0 en caso contrario.
+#
+#   4) prop_educ_alta
+#       Personas con educación superior o universitaria (P6210 == 6)
+#       divididas entre el total del hogar.
+#
+#   5) avg_educ_adultos
+#       Promedio de cat_educ entre adultos (≥18 años) del hogar.
+#       Captura el capital humano promedio, complementando el
+#       máximo educativo y la proporción de alta educación.
+#       Si el hogar no tiene adultos se asigna 0.
+#
+#   6) tasa_desempleo_hogar
+#       Desocupados / (Ocupados + Desocupados) del hogar.
+#       Mide la presión de desempleo activo dentro de la PEA
+#       del hogar. Si Des no existe o la PEA es 0, se asigna 0.
+#
+#   Desde hogares_raw
+#   -----------------
+#   7) hacinamiento
+#       Total de personas del hogar / Cuartos para dormir (P5010).
+#       Proxy de condiciones de vivienda. Si P5010 no existe se
+#       intenta con P5000 (total de cuartos).
+#       Valores con 0 cuartos se tratan como NA.
+#
+#   8) n_servicios
+#       Suma de servicios públicos disponibles (0–5):
+#       acueducto (P4030S1), alcantarillado (P4030S2),
+#       gas natural (P4030S3), energía eléctrica (P4030S4) y
+#       recolección de basuras (P4030S5).
+#       Cada servicio vale 1 si P4030Sx == 1, 0 en caso contrario.
+#
+# ¿Qué devuelve?
+#   Un data frame con una fila por hogar (id) y las ocho variables.
+# ------------------------------------------------------------
+build_features_hogar <- function(personas_raw, hogares_raw) {
+
+  # ----------------------------------------------------------
+  # Parte 1: variables derivadas de personas
+  # ----------------------------------------------------------
+
+  # Verificar si existe variable de desocupados en los datos
+  tiene_des <- "Des" %in% names(personas_raw)
+
+  features_personas <- personas_raw %>%
+    mutate(
+      # PET: ≥12 años (definición DANE para módulos de trabajo)
+      in_PET       = P6040 >= 12,
+
+      # Ocupado: Oc tiene valor (no es NA)
+      is_oc        = !is.na(Oc),
+
+      # Desocupado: Des tiene valor, solo si la columna existe
+      is_des       = if (tiene_des) !is.na(Des) else FALSE,
+
+      # Dependiente: menor de 12 años O en PET pero fuera de la PEA
+      is_dep       = !in_PET | (in_PET & !is_oc & !is_des),
+
+      # Informal: ocupado sin cotización a pensión
+      # P6920 == 1 -> cotiza; P6920 == 2 o NA -> no cotiza (informal)
+      is_informal  = is_oc & (is.na(P6920) | P6920 != 1),
+
+      # Cabeza del hogar
+      is_head      = P6050 == 1,
+
+      # Mujer
+      is_woman     = P6020 == 2,
+
+      # Nivel educativo ajustado (9 = no sabe -> 0)
+      cat_educ_raw = ifelse(P6210 == 9, 0, P6210),
+
+      # Educación alta: superior o universitaria (código 6 en P6210)
+      is_educ_alta = cat_educ_raw == 6,
+
+      # Adulto: ≥18 años (para promedio educativo)
+      is_adult     = P6040 >= 18
+    ) %>%
+    group_by(id) %>%
+    summarize(
+      total_hogar      = n(),
+      n_dependientes   = sum(is_dep,       na.rm = TRUE),
+      n_ocupados       = sum(is_oc,        na.rm = TRUE),
+      n_desocupados    = sum(is_des,       na.rm = TRUE),
+      n_informales     = sum(is_informal,  na.rm = TRUE),
+      n_educ_alta      = sum(is_educ_alta, na.rm = TRUE),
+      mujer_jefe_ocup  = as.integer(any(is_head & is_woman & is_oc,
+                                        na.rm = TRUE)),
+      # Promedio educativo solo entre adultos del hogar
+      avg_educ_adultos = mean(cat_educ_raw[is_adult == TRUE], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      prop_dependiente     = n_dependientes / total_hogar,
+      prop_informal        = ifelse(n_ocupados > 0,
+                                    n_informales / n_ocupados, 0),
+      prop_educ_alta       = n_educ_alta / total_hogar,
+      tasa_desempleo_hogar = ifelse(
+        (n_ocupados + n_desocupados) > 0,
+        n_desocupados / (n_ocupados + n_desocupados), 0
+      ),
+      # NaN aparece cuando no hay adultos en el hogar -> reemplazar por 0
+      avg_educ_adultos     = ifelse(is.nan(avg_educ_adultos),
+                                    0, avg_educ_adultos)
+    )
+
+  # ----------------------------------------------------------
+  # Parte 2: variables derivadas de hogares
+  # ----------------------------------------------------------
+
+  # Variable de cuartos: usar P5010 (dormir) si existe, si no P5000
+  tiene_p5010 <- "P5010" %in% names(hogares_raw)
+  var_cuartos <- if (tiene_p5010) "P5010" else "P5000"
+
+  features_hogares <- hogares_raw %>%
+    mutate(
+      # Número de cuartos para dormir (0 se trata como NA)
+      cuartos = ifelse(.data[[var_cuartos]] > 0,
+                       .data[[var_cuartos]], NA_real_),
+      # Servicios públicos: 1 si el hogar tiene el servicio
+      n_servicios = ((!is.na(P4030S1) & P4030S1 == 1)) +
+                    ((!is.na(P4030S2) & P4030S2 == 1)) +
+                    ((!is.na(P4030S3) & P4030S3 == 1)) +
+                    ((!is.na(P4030S4) & P4030S4 == 1)) +
+                    ((!is.na(P4030S5) & P4030S5 == 1))
+    ) %>%
+    select(id, cuartos, n_servicios)
+
+  # ----------------------------------------------------------
+  # Parte 3: combinar y calcular hacinamiento
+  # ----------------------------------------------------------
+
+  df <- features_personas %>%
+    left_join(features_hogares, by = "id") %>%
+    mutate(
+      hacinamiento = total_hogar / cuartos
+    ) %>%
+    select(id, prop_dependiente, prop_informal, mujer_jefe_ocup,
+           prop_educ_alta, avg_educ_adultos, tasa_desempleo_hogar,
+           hacinamiento, n_servicios)
+
+  return(df)
+}
+
+
+# ------------------------------------------------------------
 # multiStats()
 # ------------------------------------------------------------
 # Objetivo:

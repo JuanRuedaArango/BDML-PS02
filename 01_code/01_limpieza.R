@@ -298,7 +298,8 @@ objetos_a_conservar <- c(
   "convert_factors",
   "make_ctrl",
   "fit_elastic_net",
-  "make_submission_name"
+  "make_submission_name",
+  "build_features_hogar"
 )
 
 rm(list = setdiff(ls(), objetos_a_conservar))

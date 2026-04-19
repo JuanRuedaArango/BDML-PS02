@@ -24,7 +24,7 @@
 #   que centralice la lectura de los archivos y evite repetir
 #   read.csv() cuatro veces en el flujo principal.
 # ------------------------------------------------------------
-load_bases <- function(path = "C:/Users/herna/Downloads") {
+load_bases <- function(path = "Bases") {
   list(
     train_hogares  = read.csv(file.path(path, "train_hogares.csv")),
     train_personas = read.csv(file.path(path, "train_personas.csv")),

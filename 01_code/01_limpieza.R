@@ -47,7 +47,7 @@ print(table(ifelse(train_personas_raw$P6050 == 1, 1, 0), train_personas$head, us
 cat("\n")
 
 cat("Tabla P6040 -> minor (train)\n")
-print(table(ifelse(train_personas_raw$P6040 <= 6, 1, 0), train_personas$minor, useNA = "ifany"))
+print(table(ifelse(train_personas_raw$P6040 <= 17, 1, 0), train_personas$minor, useNA = "ifany"))
 cat("\n")
 
 cat("Tabla P6210 -> cat_educ (train)\n")
@@ -61,7 +61,7 @@ cat("\n")
 # 4.4 Verificación lógica exacta
 cat("woman correcto:", all(train_personas$woman == ifelse(train_personas_raw$P6020 == 2, 1, 0)), "\n")
 cat("head correcto:", all(train_personas$head == ifelse(train_personas_raw$P6050 == 1, 1, 0)), "\n")
-cat("minor correcto:", all(train_personas$minor == ifelse(train_personas_raw$P6040 <= 6, 1, 0)), "\n")
+cat("minor correcto:", all(train_personas$minor == ifelse(train_personas_raw$P6040 <= 17, 1, 0)), "\n")
 cat("cat_educ correcto:", all(train_personas$cat_educ == ifelse(train_personas_raw$P6210 == 9, 0, train_personas_raw$P6210)), "\n")
 cat("occupied correcto:", all(train_personas$occupied == ifelse(is.na(train_personas_raw$Oc), 0, 1)), "\n\n")
 
@@ -246,7 +246,7 @@ cat("cat_educHead coincide:",
     all(niveles_educ[as.character(train_before_factors$cat_educHead)] == as.character(train$cat_educHead)), "\n\n")
 
 # ============================================================
-# 9. Conversión de variables categóricas
+# 9. Alineación de factores entre train y test
 # ============================================================
 factores_data <- prepare_train_test_factors(train, test)
 
@@ -296,8 +296,8 @@ objetos_a_conservar <- c(
   "build_personas_hogar",
   "prepare_hogares",
   "convert_factors",
-  "make_ctrl",
-  "fit_elastic_net",
+  "prepare_train_test_factors",
+  "multiStats",
   "make_submission_name",
   "build_features_hogar"
 )

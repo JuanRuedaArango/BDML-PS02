@@ -78,8 +78,7 @@ library(ggplot2)
 # ==============================================================
 # SECTION 3: Running scripts
 # ==============================================================
-# source("01_code/00_webscrapping.R")
-# source("01_code/01_data_cleaning.R")
-# source("01_code/02_seccion1.R")
-# source("01_code/03_seccion2.R")
-# source("01_code/04_seccion3.R")
+source("01_code/00_funciones.R")
+source("01_code/01_limpieza.R")
+source("01_code/02_feature_engineering.R")
+source("01_code/03_ElasticNet.R")

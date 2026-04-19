@@ -275,7 +275,7 @@ submission_name3 <- make_submission_name(
   best_cutoff = best_cutoff
 )
 
-output_path3 <- file.path("02_outputs", "predictions", submission_name)
+output_path3 <- file.path("02_outputs", "predictions", submission_name3)
 
 write.csv(predictSample3, output_path3, row.names = FALSE)
 

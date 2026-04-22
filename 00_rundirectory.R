@@ -51,6 +51,7 @@ required_packages <- c(
   "scales",
   "glmnet",     # Para estimar Elastic NET
   "lightgbm",   # Para estimar LightGBM
+  "ranger",     # Para estimar Random Forest (más rápido que randomForest)
   "reticulate",
   "readr",
   "readxl",
@@ -92,3 +93,4 @@ source("01_code/01_limpieza.R")
 source("01_code/02_feature_engineering.R")
 source("01_code/03_ElasticNet.R")
 source("01_code/04_LightGBM.R")
+source("01_code/05_RandomForest.R")

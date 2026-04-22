@@ -515,3 +515,23 @@ name_D <- paste0(
 path_D <- file.path("02_outputs", "predictions", name_D)
 write.csv(predictSample_D, path_D, row.names = FALSE)
 cat("Modelo D guardado en:", path_D, "\n")
+
+
+# ============================================================
+# 6. Guardar probabilidades para ensemble con Random Forest
+# ============================================================
+# Exportamos las probabilidades OOF (sobre train) y sobre test
+# del Modelo C (scale_pos_weight + mejor AUC), que es el más
+# fuerte de los cuatro. El script 05_RandomForest.R las carga
+# para construir el ensemble RF + LightGBM.
+
+saveRDS(
+  list(
+    oof_probs  = oof_probs_C,   # probabilidades out-of-fold en train
+    test_probs = preds_C,        # probabilidades sobre test
+    y_train    = y_train          # etiquetas reales de train (0/1)
+  ),
+  file = file.path("02_outputs", "lgbm_probs_ensemble.rds")
+)
+
+cat("Probabilidades LightGBM guardadas para ensemble.\n")

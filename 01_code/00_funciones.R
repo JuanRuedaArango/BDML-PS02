@@ -379,6 +379,8 @@ prepare_train_test_factors <- function(train, test) {
 #       gas natural (P4030S3), energía eléctrica (P4030S4) y
 #       recolección de basuras (P4030S5).
 #       Cada servicio vale 1 si P4030Sx == 1, 0 en caso contrario.
+#       Si ninguna de estas columnas existe en los datos (algunas
+#       versiones del GEIH no las incluyen), n_servicios = NA.
 #
 # ¿Qué devuelve?
 #   Un data frame con una fila por hogar (id) y las ocho variables.
@@ -461,18 +463,32 @@ build_features_hogar <- function(personas_raw, hogares_raw) {
   tiene_p5010 <- "P5010" %in% names(hogares_raw)
   var_cuartos <- if (tiene_p5010) "P5010" else "P5000"
 
+  # Detectar qué columnas de servicios públicos están disponibles.
+  # En algunas versiones del GEIH se llaman P4030S1…P4030S5; en
+  # otras no existen. Calculamos n_servicios solo con las que haya.
+  cols_servicios <- paste0("P4030S", 1:5)
+  cols_disponibles <- intersect(cols_servicios, names(hogares_raw))
+
   features_hogares <- hogares_raw %>%
     mutate(
       # Número de cuartos para dormir (0 se trata como NA)
       cuartos = ifelse(.data[[var_cuartos]] > 0,
-                       .data[[var_cuartos]], NA_real_),
-      # Servicios públicos: 1 si el hogar tiene el servicio
-      n_servicios = ((!is.na(P4030S1) & P4030S1 == 1)) +
-                    ((!is.na(P4030S2) & P4030S2 == 1)) +
-                    ((!is.na(P4030S3) & P4030S3 == 1)) +
-                    ((!is.na(P4030S4) & P4030S4 == 1)) +
-                    ((!is.na(P4030S5) & P4030S5 == 1))
+                       .data[[var_cuartos]], NA_real_)
     ) %>%
+    # Servicios públicos: suma de los servicios disponibles (0–5).
+    # Usamos across() para operar solo sobre las columnas que existen.
+    # Si ninguna columna P4030Sx está en los datos, n_servicios = NA.
+    { if (length(cols_disponibles) == 0) {
+        mutate(., n_servicios = NA_integer_)
+      } else {
+        mutate(.,
+          n_servicios = rowSums(
+            across(all_of(cols_disponibles), ~ as.integer(!is.na(.x) & .x == 1)),
+            na.rm = TRUE
+          )
+        )
+      }
+    } %>%
     select(id, cuartos, n_servicios)
 
   # ----------------------------------------------------------
@@ -489,6 +505,163 @@ build_features_hogar <- function(personas_raw, hogares_raw) {
            hacinamiento, n_servicios)
 
   return(df)
+}
+
+
+# ------------------------------------------------------------
+# build_nuevas_hogares()
+# ------------------------------------------------------------
+# Objetivo:
+#   Construir variables adicionales a nivel hogar directamente
+#   desde la base cruda de hogares, capturando dimensiones de
+#   pobreza multidimensional que el primer bloque de features
+#   no cubría.
+#
+# Entrada:
+#   - hogares_raw: data frame crudo de hogares del GEIH.
+#
+# Variables que crea:
+#   - zona_rural        : 1 si Clase != 1 (fuera de cabecera
+#                         municipal). Las tasas de pobreza rurales
+#                         son históricamente 3-4x las urbanas.
+#   - vivienda_precaria : 1 si P5100 no es casa (1) ni apartamento
+#                         (2): cuartos, viviendas indígenas, tiendas,
+#                         carpas, etc. Dimensión del IPM.
+#   - sin_agua_red      : 1 si P5130 != 1 (sin acueducto público o
+#                         privado). Proxy de acceso a servicios.
+#   - sin_sanitario     : 1 si P5140 != 1 (sin inodoro conectado a
+#                         alcantarillado). Dimensión del IPM.
+#   - cuartos_por_persona: P5000 / Nper. Más cuartos por persona
+#                         indica mejores condiciones. Complementa
+#                         hacinamiento desde la base de personas.
+#
+# ¿Qué devuelve?
+#   Un data frame con una fila por hogar (id) y las cinco variables.
+# ------------------------------------------------------------
+build_nuevas_hogares <- function(hogares_raw) {
+  hogares_raw %>%
+    mutate(
+      # Zona rural: cabecera = 1; centro poblado = 2; rural = 3
+      zona_rural = as.integer(!is.na(Clase) & Clase != 1),
+
+      # Vivienda precaria: no es casa (1) ni apartamento (2)
+      vivienda_precaria = as.integer(!is.na(P5100) & !P5100 %in% c(1, 2)),
+
+      # Sin acueducto: P5130 == 1 → acueducto público o comunitario
+      sin_agua_red = as.integer(!is.na(P5130) & P5130 != 1),
+
+      # Sin sanitario conectado: P5140 == 1 → inodoro con alcantarillado
+      sin_sanitario = as.integer(!is.na(P5140) & P5140 != 1),
+
+      # Cuartos totales por persona (0 cuartos → NA)
+      cuartos_por_persona = ifelse(
+        !is.na(P5000) & P5000 > 0 & !is.na(Nper) & Nper > 0,
+        P5000 / Nper,
+        NA_real_
+      )
+    ) %>%
+    select(id, zona_rural, vivienda_precaria, sin_agua_red,
+           sin_sanitario, cuartos_por_persona)
+}
+
+
+# ------------------------------------------------------------
+# build_nuevas_personas()
+# ------------------------------------------------------------
+# Objetivo:
+#   Construir variables adicionales a nivel hogar desde la base
+#   de personas, centradas en el perfil del jefe del hogar y en
+#   fuentes de ingreso no laborales.
+#
+# Entrada:
+#   - personas_raw: data frame crudo de personas del GEIH.
+#
+# Variables que crea:
+#   - jefe_edad         : edad del jefe del hogar (P6040).
+#                         Hogares con jefes jóvenes o muy mayores
+#                         tienen mayor riesgo de pobreza.
+#   - jefe_cuenta_propia: 1 si el jefe es trabajador por cuenta
+#                         propia (P6430 == 4). Ingreso más volátil
+#                         e informal que el empleo dependiente.
+#   - jefe_anos_educ    : años de educación del jefe (P6210s1).
+#                         Complementa el nivel educativo categórico:
+#                         captura heterogeneidad dentro de cada nivel.
+#   - jefe_sin_pension  : 1 si el jefe está ocupado pero no cotiza
+#                         a pensión (P6920 != 1). Indicador directo
+#                         de informalidad del principal proveedor.
+#   - prop_subsidiado   : proporción de miembros afiliados al Régimen
+#                         Subsidiado de salud (P6090 == 3). El Estado
+#                         subsidia a quienes no pueden costear el
+#                         contributivo → proxy directo de pobreza.
+#   - tiene_remesas     : 1 si algún miembro recibe remesas del
+#                         exterior (P6620 == 1 o P7510s3 == 1).
+#                         Las remesas pueden sacar hogares de la línea
+#                         de pobreza.
+#   - tiene_pension_ing : 1 si algún miembro recibe ingreso de pensión
+#                         (P6610 == 1). Ingreso no laboral estable.
+#   - prop_subempleado  : proporción de ocupados con subempleo por
+#                         ingresos insuficientes (P7422 == 1) o por
+#                         insuficiencia de horas (P7472 == 1).
+#                         Captura precariedad laboral más allá del
+#                         desempleo abierto.
+#
+# ¿Qué devuelve?
+#   Un data frame con una fila por hogar (id) y las ocho variables.
+# ------------------------------------------------------------
+build_nuevas_personas <- function(personas_raw) {
+
+  tiene_p7510s3 <- "P7510s3" %in% names(personas_raw)
+
+  personas_raw %>%
+    mutate(
+      is_head        = !is.na(P6050) & P6050 == 1,
+      is_ocupado     = !is.na(Oc),
+
+      # Trabajador por cuenta propia
+      cuenta_propia  = !is.na(P6430) & P6430 == 4,
+
+      # Años de educación (puede ser NA si no aplica)
+      anos_educ      = suppressWarnings(as.numeric(P6210s1)),
+
+      # Ocupado sin cotización a pensión → informal
+      sin_pension_oc = is_ocupado & (is.na(P6920) | P6920 != 1),
+
+      # Régimen Subsidiado de salud (proxy directo de vulnerabilidad)
+      subsidiado     = !is.na(P6090) & P6090 == 3,
+
+      # Recibe remesas del exterior
+      remesas        = (!is.na(P6620) & P6620 == 1) |
+                       (if (tiene_p7510s3) (!is.na(P7510s3) & P7510s3 == 1)
+                        else FALSE),
+
+      # Recibe ingresos de pensión
+      pension_ing    = !is.na(P6610) & P6610 == 1,
+
+      # Subempleo (por ingresos o por horas)
+      subempleado    = is_ocupado & (
+                         (!is.na(P7422) & P7422 == 1) |
+                         (!is.na(P7472) & P7472 == 1)
+                       )
+    ) %>%
+    group_by(id) %>%
+    summarize(
+      # --- Perfil del jefe ---
+      jefe_edad          = dplyr::first(P6040[is_head],     default = NA_real_),
+      jefe_cuenta_propia = as.integer(any(is_head & cuenta_propia,  na.rm = TRUE)),
+      jefe_anos_educ     = dplyr::first(anos_educ[is_head], default = NA_real_),
+      jefe_sin_pension   = as.integer(any(is_head & sin_pension_oc, na.rm = TRUE)),
+
+      # --- Características del hogar ---
+      prop_subsidiado    = mean(subsidiado, na.rm = TRUE),
+      tiene_remesas      = as.integer(any(remesas,     na.rm = TRUE)),
+      tiene_pension_ing  = as.integer(any(pension_ing, na.rm = TRUE)),
+      prop_subempleado   = ifelse(
+        sum(is_ocupado, na.rm = TRUE) > 0,
+        sum(subempleado, na.rm = TRUE) / sum(is_ocupado, na.rm = TRUE),
+        NA_real_
+      ),
+      .groups = "drop"
+    )
 }
 
 

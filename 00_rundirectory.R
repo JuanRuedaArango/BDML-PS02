@@ -1,7 +1,7 @@
 # ==============================================================
 # Taller 2 Big Data
 # Hernan Yepes, Juan Rueda y Andrés Suárez
-# ============================================================== 
+# ==============================================================
 # MASTER SCRIPT
 
 # Running this file reproduces all results in the repository.
@@ -12,6 +12,15 @@
 # ==============================================================
 
 rm(list = ls())
+
+# Fija el working directory a la carpeta donde vive este script.
+# Esto es necesario cuando se corre con Source en RStudio sin un
+# .Rproj abierto, porque en ese caso R no cambia el directorio
+# automáticamente y las rutas relativas no se resuelven bien.
+if (requireNamespace("rstudioapi", quietly = TRUE) &&
+      rstudioapi::isAvailable()) {
+  setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+}
 
 cat("Working directory:\n")
 print(getwd())
@@ -36,11 +45,12 @@ required_packages <- c(
   "magrittr",
   "dplyr",
   "stargazer",
-  "tibble", 
+  "tibble",
   "caret",
-  "xtable", 
+  "xtable",
   "scales",
-  "glmnet", # Para estimar Elastic NET
+  "glmnet",     # Para estimar Elastic NET
+  "lightgbm",   # Para estimar LightGBM
   "reticulate",
   "readr",
   "readxl",
@@ -50,15 +60,14 @@ required_packages <- c(
   "Metrics",
   "rio",
   "MLmetrics"
-  
 )
 
 
 # Función auxiliar para instalar paquetes si no están disponibles ----
 install_if_missing <- function(packages) {
-  new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
-  if(length(new_packages)) {
-    cat("Instalando paquetes faltantes:", paste(new_packages, collapse=", "), "\n")
+  new_packages <- packages[!(packages %in% installed.packages()[, "Package"])]
+  if (length(new_packages)) {
+    cat("Instalando paquetes faltantes:", paste(new_packages, collapse = ", "), "\n")
     install.packages(new_packages)
   } else {
     cat("Todos los paquetes ya están instalados.\n")
@@ -72,7 +81,7 @@ lapply(required_packages, function(pkg) {
   library(pkg, character.only = TRUE)
 })
 
-library(boot) 
+library(boot)
 library(ggplot2)
 
 # ==============================================================
@@ -82,3 +91,4 @@ source("01_code/00_funciones.R")
 source("01_code/01_limpieza.R")
 source("01_code/02_feature_engineering.R")
 source("01_code/03_ElasticNet.R")
+source("01_code/04_LightGBM.R")

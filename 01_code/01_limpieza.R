@@ -299,7 +299,9 @@ objetos_a_conservar <- c(
   "prepare_train_test_factors",
   "multiStats",
   "make_submission_name",
-  "build_features_hogar"
+  "build_features_hogar",
+  "build_nuevas_hogares",
+  "build_nuevas_personas"
 )
 
 rm(list = setdiff(ls(), objetos_a_conservar))

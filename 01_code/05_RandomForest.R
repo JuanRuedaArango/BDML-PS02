@@ -100,7 +100,7 @@ for (i in seq_len(nrow(grid_rf))) {
   m_i <- ranger(
     formula       = Pobre ~ .,
     data          = train_rf,
-    num.trees     = 500,
+    num.trees     = 1000,
     mtry          = grid_rf$mtry[i],
     min.node.size = grid_rf$min.node.size[i],
     class.weights = c("No" = 1, "Yes" = pos_weight_rf),

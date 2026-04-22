@@ -35,50 +35,6 @@
 # 1. Preparación
 # ============================================================
 
-# --- Manejo de NAs ---
-# ranger llama na.fail internamente y no tolera NAs en ninguna columna.
-#
-# Estrategia:
-#   train : na.omit() elimina las filas con al menos un NA. Son casos
-#           extremos (hogares sin jefe registrado, sin cuartos, etc.)
-#           que representan una fracción pequeña del dataset.
-#   test  : no podemos eliminar filas (necesitamos predecir para todos).
-#           Imputamos con la mediana de train en numéricas y con un
-#           nivel nuevo en factores.
-
-# Guardar medianas de train ANTES de na.omit (sobre datos completos)
-train_medians <- sapply(
-  names(train)[sapply(train, is.numeric)],
-  function(col) median(train[[col]], na.rm = TRUE)
-)
-
-# train: eliminar filas incompletas
-train_rf <- na.omit(train)
-cat("Filas en train original :", nrow(train),    "\n")
-cat("Filas eliminadas por NA :", nrow(train) - nrow(train_rf), "\n")
-cat("Filas en train_rf       :", nrow(train_rf), "\n\n")
-
-# test: imputar numéricas con medianas de train
-test_rf <- test
-for (col in names(train_medians)) {
-  if (col %in% names(test_rf) && anyNA(test_rf[[col]])) {
-    test_rf[[col]][is.na(test_rf[[col]])] <- train_medians[[col]]
-  }
-}
-
-# test: imputar factores con nivel "Desconocido"
-for (col in names(test_rf)[sapply(test_rf, is.factor)]) {
-  if (!anyNA(test_rf[[col]])) next
-  levels(test_rf[[col]]) <- c(levels(test_rf[[col]]), "Desconocido")
-  test_rf[[col]][is.na(test_rf[[col]])] <- "Desconocido"
-}
-
-# Verificación final
-nas_train <- sum(sapply(train_rf, anyNA))
-nas_test  <- sum(sapply(select(test_rf, -id), anyNA))
-cat("NAs en train_rf:", nas_train, "\n")
-cat("NAs en test_rf :", nas_test,  "\n\n")
-
 # --- Peso por desbalance de clase ---
 # Mismo criterio que en LightGBM: peso(Yes) = N_No / N_Yes
 pos_weight_rf <- sum(train_rf$Pobre == "No") / sum(train_rf$Pobre == "Yes")

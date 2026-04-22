@@ -265,3 +265,51 @@ print(colSums(is.na(train[nuevas_vars])))
 
 cat("\nNAs nuevas variables — test:\n")
 print(colSums(is.na(test[nuevas_vars])))
+
+
+# ============================================================
+# 5.6 Imputación de NAs en train y test
+# ============================================================
+# Las variables nuevas pueden tener NAs en casos extremos (hogares
+# sin jefe registrado, sin cuartos, sin ocupados, etc.). Los scripts
+# de modelos (Elastic Net, LightGBM, Random Forest) no toleran NAs.
+# Imputamos aquí una sola vez para que todos los modelos reciban
+# datos limpios.
+#
+# Estrategia:
+#   Numéricas : mediana de train (calculada antes de tocar test).
+#   Factores  : nivel "Desconocido" para los NAs (más seguro que
+#               asignar un string que puede no coincidir con un nivel).
+#
+# Los valores de imputación se calculan SOLO sobre train para evitar
+# data leakage hacia test.
+
+# --- Medianas de train para cada columna numérica ---
+cols_num <- names(train)[sapply(train, is.numeric)]
+medianas  <- sapply(cols_num, function(col) median(train[[col]], na.rm = TRUE))
+
+# --- Aplicar imputación numérica ---
+for (col in cols_num) {
+  if (anyNA(train[[col]])) train[[col]][is.na(train[[col]])] <- medianas[[col]]
+  if (col %in% names(test) && anyNA(test[[col]]))
+    test[[col]][is.na(test[[col]])] <- medianas[[col]]
+}
+
+# --- Aplicar imputación de factores ---
+cols_fac <- names(train)[sapply(train, is.factor) & names(train) != "Pobre"]
+for (col in cols_fac) {
+  if (anyNA(train[[col]])) {
+    levels(train[[col]]) <- c(levels(train[[col]]), "Desconocido")
+    train[[col]][is.na(train[[col]])] <- "Desconocido"
+  }
+  if (col %in% names(test) && anyNA(test[[col]])) {
+    levels(test[[col]]) <- c(levels(test[[col]]), "Desconocido")
+    test[[col]][is.na(test[[col]])] <- "Desconocido"
+  }
+}
+
+# --- Verificación final ---
+nas_train_final <- sum(sapply(train, anyNA))
+nas_test_final  <- sum(sapply(select(test, -id), anyNA))
+cat("\nNAs en train tras imputación:", nas_train_final, "\n")
+cat("NAs en test  tras imputación:", nas_test_final,  "\n")

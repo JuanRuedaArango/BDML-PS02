@@ -35,20 +35,60 @@
 # 1. Preparación
 # ============================================================
 
+# --- Manejo de NAs ---
+# ranger llama na.fail internamente y no tolera NAs en ninguna columna.
+#
+# Estrategia:
+#   train : na.omit() elimina las filas con al menos un NA. Son casos
+#           extremos (hogares sin jefe registrado, sin cuartos, etc.)
+#           que representan una fracción pequeña del dataset.
+#   test  : no podemos eliminar filas (necesitamos predecir para todos).
+#           Imputamos con la mediana de train en numéricas y con un
+#           nivel nuevo en factores.
+
+# Guardar medianas de train ANTES de na.omit (sobre datos completos)
+train_medians <- sapply(
+  names(train)[sapply(train, is.numeric)],
+  function(col) median(train[[col]], na.rm = TRUE)
+)
+
+# train: eliminar filas incompletas
+train_rf <- na.omit(train)
+cat("Filas en train original :", nrow(train),    "\n")
+cat("Filas eliminadas por NA :", nrow(train) - nrow(train_rf), "\n")
+cat("Filas en train_rf       :", nrow(train_rf), "\n\n")
+
+# test: imputar numéricas con medianas de train
+test_rf <- test
+for (col in names(train_medians)) {
+  if (col %in% names(test_rf) && anyNA(test_rf[[col]])) {
+    test_rf[[col]][is.na(test_rf[[col]])] <- train_medians[[col]]
+  }
+}
+
+# test: imputar factores con nivel "Desconocido"
+for (col in names(test_rf)[sapply(test_rf, is.factor)]) {
+  if (!anyNA(test_rf[[col]])) next
+  levels(test_rf[[col]]) <- c(levels(test_rf[[col]]), "Desconocido")
+  test_rf[[col]][is.na(test_rf[[col]])] <- "Desconocido"
+}
+
+# Verificación final
+nas_train <- sum(sapply(train_rf, anyNA))
+nas_test  <- sum(sapply(select(test_rf, -id), anyNA))
+cat("NAs en train_rf:", nas_train, "\n")
+cat("NAs en test_rf :", nas_test,  "\n\n")
+
 # --- Peso por desbalance de clase ---
 # Mismo criterio que en LightGBM: peso(Yes) = N_No / N_Yes
-pos_weight_rf <- sum(train$Pobre == "No") / sum(train$Pobre == "Yes")
+pos_weight_rf <- sum(train_rf$Pobre == "No") / sum(train_rf$Pobre == "Yes")
 
-cat("Proporción de pobres en train :", round(mean(train$Pobre == "Yes"), 4), "\n")
+cat("Proporción de pobres en train :", round(mean(train_rf$Pobre == "Yes"), 4), "\n")
 cat("scale_pos_weight              :", round(pos_weight_rf, 3), "\n\n")
 
-# Pesos por observación (ranger acepta case.weights)
-obs_weights <- ifelse(train$Pobre == "Yes", pos_weight_rf, 1)
-obs_weights  <- obs_weights / mean(obs_weights)  # normalizar a media 1
-
 # --- Número de predictores ---
-# train no tiene id; test sí, lo excluimos al predecir.
-p <- ncol(train) - 1   # columnas menos Pobre
+# train_rf no tiene id; test_rf sí, lo excluimos al predecir.
+p <- ncol(train_rf) - 1   # columnas menos Pobre
 cat("Predictores disponibles:", p, "\n\n")
 
 # --- Cargar probabilidades LightGBM para el ensemble ---
@@ -103,7 +143,7 @@ for (i in seq_len(nrow(grid_rf))) {
 
   m_i <- ranger(
     formula       = Pobre ~ .,
-    data          = train,
+    data          = train_rf,
     num.trees     = 500,
     mtry          = grid_rf$mtry[i],
     min.node.size = grid_rf$min.node.size[i],
@@ -119,9 +159,9 @@ for (i in seq_len(nrow(grid_rf))) {
 
   # F1 con umbral 0.5
   pred_i  <- ifelse(oob_probs_i >= 0.5, "Yes", "No")
-  tp_i    <- sum(pred_i == "Yes" & train$Pobre == "Yes")
-  fp_i    <- sum(pred_i == "Yes" & train$Pobre == "No")
-  fn_i    <- sum(pred_i == "No"  & train$Pobre == "Yes")
+  tp_i    <- sum(pred_i == "Yes" & train_rf$Pobre == "Yes")
+  fp_i    <- sum(pred_i == "Yes" & train_rf$Pobre == "No")
+  fn_i    <- sum(pred_i == "No"  & train_rf$Pobre == "Yes")
   prec_i  <- ifelse(tp_i + fp_i > 0, tp_i / (tp_i + fp_i), 0)
   rec_i   <- ifelse(tp_i + fn_i > 0, tp_i / (tp_i + fn_i), 0)
   f1_i    <- ifelse(prec_i + rec_i > 0,
@@ -165,7 +205,7 @@ set.seed(2025)
 
 model_rf_A <- ranger(
   formula       = Pobre ~ .,
-  data          = train,
+  data          = train_rf,
   num.trees     = 500,
   mtry          = best_rf$mtry,
   min.node.size = best_rf$min.node.size,
@@ -189,7 +229,7 @@ cat("Modelo A entrenado. OOB error:", round(model_rf_A$prediction.error, 4), "\n
 oob_probs_B <- model_rf_A$predictions[, "Yes"]
 
 roc_rf <- pROC::roc(
-  response  = train$Pobre,
+  response  = train_rf$Pobre,
   predictor = oob_probs_B,
   levels    = c("No", "Yes"),
   direction = "<"
@@ -240,7 +280,7 @@ if (!is.null(lgbm_oof_probs)) {
   ensemble_oof_probs <- 0.5 * oob_probs_B + 0.5 * lgbm_oof_probs
 
   roc_ens <- pROC::roc(
-    response  = train$Pobre,
+    response  = train_rf$Pobre,
     predictor = ensemble_oof_probs,
     levels    = c("No", "Yes"),
     direction = "<"
@@ -298,12 +338,12 @@ cat("\n")
 # 5. Predicciones sobre test
 # ============================================================
 
-test_sin_id <- test %>% select(-id)
+test_sin_id <- test_rf %>% select(-id)
 
 # --- Modelo A: umbral 0.5 ---
 probs_test_rf <- predict(model_rf_A, data = test_sin_id)$predictions[, "Yes"]
 
-predictSample_rfA <- test %>%
+predictSample_rfA <- test_rf %>%
   transmute(
     id    = id,
     pobre = ifelse(probs_test_rf >= 0.5, 1, 0)
@@ -313,7 +353,7 @@ cat("Distribución predicciones Modelo A (RF baseline):\n")
 print(table(predictSample_rfA$pobre))
 
 # --- Modelo B: umbral óptimo RF ---
-predictSample_rfB <- test %>%
+predictSample_rfB <- test_rf %>%
   transmute(
     id    = id,
     pobre = ifelse(probs_test_rf >= best_cutoff_rf$threshold, 1, 0)
@@ -327,7 +367,7 @@ if (!is.null(lgbm_test_probs)) {
 
   ensemble_test_probs <- 0.5 * probs_test_rf + 0.5 * lgbm_test_probs
 
-  predictSample_rfC <- test %>%
+  predictSample_rfC <- test_rf %>%
     transmute(
       id    = id,
       pobre = ifelse(ensemble_test_probs >= best_cutoff_ens$threshold, 1, 0)

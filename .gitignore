@@ -1,0 +1,14 @@
+# Datos crudos (archivos grandes, no se suben a GitHub)
+Bases/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db
+Inter/
+*.RDataTmp

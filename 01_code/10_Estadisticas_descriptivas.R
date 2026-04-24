@@ -27,7 +27,7 @@ library(gt)
 library(scales)
 library(forcats)
 
-path_plots <- "02_outputs/plots/descriptive"
+path_plots <- "02_outputs/figures"
 
 dir.create(path_plots, recursive = TRUE, showWarnings = FALSE)
 
@@ -57,6 +57,9 @@ vars_num <- c(
   "persons_per_worker",
   "minors_per_worker"
 )
+
+# Filtra a las que sí existen en train (evita fallar si el FE cambió)
+vars_num <- intersect(vars_num, names(train))
 
 labels_vars <- c(
   prop_dependiente = "Tasa de dependencia",
@@ -142,6 +145,7 @@ vars_faltantes_num <- c(
   "jefe_anos_educ",
   "n_personas"
 )
+vars_faltantes_num <- intersect(vars_faltantes_num, names(train))
 
 labels_vars <- c(
   num_women = "Número de mujeres",
@@ -246,6 +250,7 @@ vars_tabla <- c(
   "tiene_pension_ing",
   "jefe_sin_pension"
 )
+vars_tabla <- intersect(vars_tabla, names(train))
 
 labels_vars <- c(
   headWoman = "Jefatura femenina",
@@ -312,22 +317,171 @@ tabla_desc<-tabla_final %>%
 # 5. EXPORTAR
 # ============================================================
 
-dir.create("02_outputs/plots/descriptive", recursive = TRUE, showWarnings = FALSE)
+dir.create("02_outputs/figures", recursive = TRUE, showWarnings = FALSE)
 
 gtsave(
   tabla_2,
-  filename = "02_outputs/plots/descriptive/tabla_pobreza2.png"
+  filename = "02_outputs/figures/tabla_pobreza2.png"
 )
 
 gtsave(
   tabla_desc,
-  filename = "02_outputs/plots/descriptive/tabla_pobreza1.png"
+  filename = "02_outputs/figures/tabla_pobreza1.png"
 )
 
 ggsave(
-  filename = "02_outputs/plots/descriptive/grafico_pobreza.png",
+  filename = "02_outputs/figures/grafico_pobreza.png",
   plot = plot_pobreza,
   width = 10,
   height = 7,
   dpi = 300
 )
+
+
+# ============================================================
+# 6. Estadísticas descriptivas completas — predictores LGBM
+# ============================================================
+# Para la submission LGBM_weighted_PR_leaves_63_lr_0_05_iter_393_threshold_0_668.csv
+# los predictores son todas las columnas de `train` excepto `Pobre`.
+# Generamos tres tablas separadas por tipo (numérica, binaria, categórica)
+# con estadísticas apropiadas + distribución por condición de pobreza.
+
+predictores_lgbm <- setdiff(names(train), "Pobre")
+
+# Clasificación por tipo
+es_binaria <- function(x) {
+  if (!is.numeric(x)) return(FALSE)
+  vals <- unique(x[!is.na(x)])
+  length(vals) <= 2 && all(vals %in% c(0, 1))
+}
+
+tipos <- sapply(predictores_lgbm, function(v) {
+  x <- train[[v]]
+  if (is.factor(x) || is.character(x)) "categorica"
+  else if (es_binaria(x))               "binaria"
+  else                                  "numerica"
+})
+
+vars_num_lgbm <- names(tipos)[tipos == "numerica"]
+vars_bin_lgbm <- names(tipos)[tipos == "binaria"]
+vars_cat_lgbm <- names(tipos)[tipos == "categorica"]
+
+cat("\nPredictores LGBM — total:", length(predictores_lgbm), "\n")
+cat("  Numéricas  :", length(vars_num_lgbm), "\n")
+cat("  Binarias   :", length(vars_bin_lgbm), "\n")
+cat("  Categóricas:", length(vars_cat_lgbm), "\n\n")
+
+
+# ---- 6.1 Tabla numéricas: media/sd/min/p25/mediana/p75/max por grupo ----
+stats_num <- lapply(vars_num_lgbm, function(v) {
+  x_p <- train[[v]][train$Pobre == "Yes"]
+  x_n <- train[[v]][train$Pobre == "No"]
+  data.frame(
+    Variable  = v,
+    Media_P   = mean(x_p, na.rm = TRUE),
+    Media_NP  = mean(x_n, na.rm = TRUE),
+    Mediana_P  = median(x_p, na.rm = TRUE),
+    Mediana_NP = median(x_n, na.rm = TRUE),
+    SD_P      = sd(x_p, na.rm = TRUE),
+    SD_NP     = sd(x_n, na.rm = TRUE),
+    Min       = min(train[[v]], na.rm = TRUE),
+    Max       = max(train[[v]], na.rm = TRUE),
+    NAs       = sum(is.na(train[[v]]))
+  )
+}) %>% bind_rows() %>% arrange(Variable)
+
+tabla_num_lgbm <- stats_num %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Estadísticas descriptivas — variables numéricas**"),
+    subtitle = "Predictores usados en LGBM_weighted_PR (Modelo C)"
+  ) %>%
+  tab_spanner(label = "Media",    columns = c(Media_P, Media_NP)) %>%
+  tab_spanner(label = "Mediana",  columns = c(Mediana_P, Mediana_NP)) %>%
+  tab_spanner(label = "Desv. Est.", columns = c(SD_P, SD_NP)) %>%
+  cols_label(
+    Media_P = "Pobre",  Media_NP = "No pobre",
+    Mediana_P = "Pobre", Mediana_NP = "No pobre",
+    SD_P = "Pobre", SD_NP = "No pobre",
+    Min = "Mín", Max = "Máx", NAs = "NAs"
+  ) %>%
+  fmt_number(columns = where(is.numeric), decimals = 2) %>%
+  tab_source_note(source_note = md("Fuente: DANE (GEIH/MESE). Elaboración propia.")) %>%
+  opt_row_striping() %>%
+  tab_options(table.font.size = 10, data_row.padding = px(3))
+
+gtsave(tabla_num_lgbm, "02_outputs/figures/tabla_descriptiva_num_lgbm.png")
+
+
+# ---- 6.2 Tabla binarias: % en cada grupo + brecha ----
+if (length(vars_bin_lgbm) > 0) {
+  stats_bin <- lapply(vars_bin_lgbm, function(v) {
+    p <- mean(train[[v]][train$Pobre == "Yes"] == 1, na.rm = TRUE)
+    n <- mean(train[[v]][train$Pobre == "No"]  == 1, na.rm = TRUE)
+    data.frame(
+      Variable = v, Pobre = p, No_pobre = n, Brecha_pp = (p - n) * 100
+    )
+  }) %>% bind_rows() %>% arrange(desc(abs(Brecha_pp)))
+
+  tabla_bin_lgbm <- stats_bin %>%
+    gt() %>%
+    tab_header(
+      title    = md("**Estadísticas descriptivas — variables binarias**"),
+      subtitle = "Proporción con valor = 1 por condición de pobreza (ordenado por brecha)"
+    ) %>%
+    fmt_percent(columns = c(Pobre, No_pobre), decimals = 1) %>%
+    fmt_number(columns = Brecha_pp, decimals = 2) %>%
+    cols_label(No_pobre = "No pobre", Brecha_pp = "Brecha (pp)") %>%
+    tab_source_note(source_note = md("Fuente: DANE (GEIH/MESE). Elaboración propia.")) %>%
+    opt_row_striping() %>%
+    tab_options(table.font.size = 10, data_row.padding = px(3))
+
+  gtsave(tabla_bin_lgbm, "02_outputs/figures/tabla_descriptiva_bin_lgbm.png")
+}
+
+
+# ---- 6.3 Tabla categóricas: niveles + distribución por grupo ----
+if (length(vars_cat_lgbm) > 0) {
+  stats_cat <- lapply(vars_cat_lgbm, function(v) {
+    x <- train[[v]]
+    data.frame(
+      Variable    = v,
+      Niveles     = length(unique(x[!is.na(x)])),
+      Moda        = names(sort(table(x), decreasing = TRUE))[1],
+      Pct_Moda    = round(100 * max(prop.table(table(x))), 1),
+      NAs         = sum(is.na(x))
+    )
+  }) %>% bind_rows() %>% arrange(desc(Niveles))
+
+  tabla_cat_lgbm <- stats_cat %>%
+    gt() %>%
+    tab_header(
+      title    = md("**Estadísticas descriptivas — variables categóricas**"),
+      subtitle = "Predictores categóricos de LGBM_weighted_PR"
+    ) %>%
+    cols_label(Pct_Moda = "% Moda") %>%
+    tab_source_note(source_note = md("Fuente: DANE (GEIH/MESE). Elaboración propia.")) %>%
+    opt_row_striping() %>%
+    tab_options(table.font.size = 10, data_row.padding = px(3))
+
+  gtsave(tabla_cat_lgbm, "02_outputs/figures/tabla_descriptiva_cat_lgbm.png")
+}
+
+
+# ---- 6.4 Export adicional a CSV (para editar libre en el informe) ----
+write.csv(stats_num, "02_outputs/tables/descriptivo_numericas_lgbm.csv",
+          row.names = FALSE)
+if (length(vars_bin_lgbm) > 0) {
+  write.csv(stats_bin, "02_outputs/tables/descriptivo_binarias_lgbm.csv",
+            row.names = FALSE)
+}
+if (length(vars_cat_lgbm) > 0) {
+  write.csv(stats_cat, "02_outputs/tables/descriptivo_categoricas_lgbm.csv",
+            row.names = FALSE)
+}
+
+cat("\nTablas descriptivas LGBM exportadas:\n")
+cat("  02_outputs/figures/tabla_descriptiva_num_lgbm.png\n")
+if (length(vars_bin_lgbm) > 0) cat("  02_outputs/figures/tabla_descriptiva_bin_lgbm.png\n")
+if (length(vars_cat_lgbm) > 0) cat("  02_outputs/figures/tabla_descriptiva_cat_lgbm.png\n")
+cat("  + CSVs en 02_outputs/tables/\n")

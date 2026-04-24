@@ -292,6 +292,10 @@ objetos_a_conservar <- c(
   
   # Flags de selección de algoritmos (definidos en 00_rundirectory.R)
   "RUN_ELASTIC_NET", "RUN_LIGHTGBM", "RUN_RANDOM_FOREST", "RUN_STACKING",
+  "RUN_DESCRIPTIVO", "RUN_GLM", "RUN_GBM", "RUN_BAYES",
+
+  # Rebindings de dplyr para que ganen contra MASS::select en el search path
+  "select", "filter",
 
   # Funciones (se conservan para poder seguir usando el script)
   "load_bases",

@@ -88,7 +88,7 @@ pre_process_personas <- function(data) {
       cat_educ = ifelse(P6210 == 9, 0, P6210),
       occupied = ifelse(is.na(Oc), 0, 1)
     ) %>%
-    select(id, Orden, woman, head, minor, cat_educ, occupied)
+    dplyr::select(id, Orden, woman, head, minor, cat_educ, occupied)
 }
 
 # ------------------------------------------------------------
@@ -148,7 +148,7 @@ build_personas_hogar <- function(personas) {
   
   personas_hogar <- personas %>%
     filter(head == 1) %>%
-    select(id, woman, cat_educ, occupied) %>%
+    dplyr::select(id, woman, cat_educ, occupied) %>%
     rename(
       headWoman    = woman,
       cat_educHead = cat_educ,
@@ -196,9 +196,9 @@ prepare_hogares <- function(hogares, is_train = TRUE) {
     mutate(rent = ifelse(P5090 == 3, 1, 0)) %>%
     {
       if (is_train) {
-        select(., id, Dominio, rent, Pobre)
+        dplyr::select(., id, Dominio, rent, Pobre)
       } else {
-        select(., id, Dominio, rent)
+        dplyr::select(., id, Dominio, rent)
       }
     }
 }
@@ -489,7 +489,7 @@ build_features_hogar <- function(personas_raw, hogares_raw) {
         )
       }
     } %>%
-    select(id, cuartos, n_servicios)
+    dplyr::select(id, cuartos, n_servicios)
 
   # ----------------------------------------------------------
   # Parte 3: combinar y calcular hacinamiento
@@ -500,9 +500,9 @@ build_features_hogar <- function(personas_raw, hogares_raw) {
     mutate(
       hacinamiento = total_hogar / cuartos
     ) %>%
-    select(id, prop_dependiente, prop_informal, mujer_jefe_ocup,
-           prop_educ_alta, avg_educ_adultos, tasa_desempleo_hogar,
-           hacinamiento, n_servicios)
+    dplyr::select(id, prop_dependiente, prop_informal, mujer_jefe_ocup,
+                  prop_educ_alta, avg_educ_adultos, tasa_desempleo_hogar,
+                  hacinamiento, n_servicios)
 
   return(df)
 }
@@ -590,10 +590,10 @@ build_nuevas_hogares <- function(hogares_raw) {
         Nper - npersug, NA_real_
       )
     ) %>%
-    select(id, zona_rural, vivienda_precaria, sin_agua_red,
-           sin_sanitario, cuartos_por_persona,
-           lp_hogar, li_hogar, lp_pc, li_pc,
-           npersug, nper_vs_ug)
+    dplyr::select(id, zona_rural, vivienda_precaria, sin_agua_red,
+                  sin_sanitario, cuartos_por_persona,
+                  lp_hogar, li_hogar, lp_pc, li_pc,
+                  npersug, nper_vs_ug)
 }
 
 

@@ -593,7 +593,7 @@ best_f1_over_thresholds <- function(probs, y, grid = seq(0.1, 0.7, by = 0.01)) {
 }
 
 # Folds compartidos entre trials (comparación justa)
-set.seed(2025)
+set.seed(2026)
 folds_E <- createFolds(y_train, k = 5, returnTrain = FALSE)
 
 resultados_E <- vector("list", N_TRIALS_E)

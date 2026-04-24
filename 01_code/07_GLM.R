@@ -725,7 +725,7 @@ pred_class_A <- ifelse(
 
 predictSample_A <- data.frame(
   id = test$id,
-  Pobre = pred_class_A
+  pobre = pred_class_A
 )
 
 name_A <- paste0(
@@ -753,7 +753,7 @@ pred_class_B <- ifelse(
 
 predictSample_B <- data.frame(
   id = test$id,
-  Pobre = pred_class_B
+  pobre = pred_class_B
 )
 
 name_B <- paste0(
@@ -783,7 +783,7 @@ pred_class_C <- ifelse(
 
 predictSample_C <- data.frame(
   id = test$id,
-  Pobre = pred_class_C
+  pobre = pred_class_C
 )
 
 name_C <- paste0(

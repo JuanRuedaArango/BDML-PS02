@@ -24,7 +24,34 @@
 #   que centralice la lectura de los archivos y evite repetir
 #   read.csv() cuatro veces en el flujo principal.
 # ------------------------------------------------------------
-load_bases <- function(path = "Bases") {
+load_bases <- function(path = getOption("bases_dir", "Bases")) {
+  
+  path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+  
+  required_files <- c(
+    "train_hogares.csv",
+    "train_personas.csv",
+    "test_hogares.csv",
+    "test_personas.csv"
+  )
+  
+  required_paths <- file.path(path, required_files)
+  
+  missing_files <- required_files[!file.exists(required_paths)]
+  
+  if (length(missing_files) > 0) {
+    stop(
+      paste0(
+        "No se encontraron todas las bases requeridas.\n\n",
+        "Carpeta buscada:\n",
+        path,
+        "\n\nArchivos faltantes:\n",
+        paste("-", missing_files, collapse = "\n")
+      ),
+      call. = FALSE
+    )
+  }
+  
   list(
     train_hogares  = read.csv(file.path(path, "train_hogares.csv")),
     train_personas = read.csv(file.path(path, "train_personas.csv")),

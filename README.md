@@ -2,7 +2,7 @@
 
 ## Descripción del proyecto
 
-Este repositorio contiene el código y análisis completo para un modelo de clasificación de pobreza a nivel de hogar, construido con datos de la encuesta MESE del DANE. El objetivo es predecir si un hogar se encuentra por debajo de la línea de pobreza usando métodos de machine learning, equilibrando el desempeño predictivo con las restricciones prácticas del diseño de política pública.
+Este repositorio contiene el código y análisis completo para un modelo de clasificación de pobreza a nivel de hogar, construido con datos de la encuesta "Empalme de las Series de Empleo, Pobreza y Desigualdad" (MESE) del DANE. El objetivo es predecir si un hogar se encuentra por debajo de la línea de pobreza usando métodos de machine learning, equilibrando el desempeño predictivo con las restricciones prácticas del diseño de política pública.
 
 El flujo de trabajo cubre la limpieza y construcción de variables a nivel de hogar e individuo, el entrenamiento y comparación de distintos algoritmos de clasificación, la selección de modelos y la evaluación del desempeño predictivo mediante métricas relevantes para clasificación, especialmente el F1 score. Los resultados se interpretan desde una perspectiva de política pública, analizando el balance entre subcobertura, asociada a falsos negativos, y filtración, asociada a falsos positivos, en instrumentos de focalización de pobreza.
 

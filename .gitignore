@@ -10,3 +10,5 @@ Bases/
 # Archivos temporales del sistema
 .DS_Store
 Thumbs.db
+Inter/
+*.RDataTmp

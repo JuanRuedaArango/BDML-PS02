@@ -307,6 +307,23 @@ correr_modelos <- function(seleccion) {
 # Primero prepara datos una sola vez.
 preparar_datos()
 
+# Opciones del menú principal
+opciones <- c(
+  "Todos (descriptivo + 7 algoritmos + stacking)",
+  "Estadísticas descriptivas",
+  "Elastic Net",
+  "LightGBM",
+  "Random Forest",
+  "GLM (MPL / Logit)",
+  "GBM (gradient boosting machine)",
+  "Naive Bayes",
+  "LightGBM + Random Forest",
+  "LightGBM + Random Forest + Stacking",
+  "Los 5 algoritmos requeridos (EN + LGBM + RF + GLM + Bayes)",
+  "Los 5 requeridos + GBM + Stacking",
+  "Salir"
+)
+
 # Luego deja al usuario volver al menú cuantas veces quiera.
 repeat {
   

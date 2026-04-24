@@ -203,26 +203,23 @@ cat("============================================================\n")
 cat(" Verificación variables adicionales (train)\n")
 cat("============================================================\n")
 
-cat("--- Desde hogares ---\n")
-cat("zona_rural         — tabla :\n"); print(table(nuevas_train_hog$zona_rural, useNA = "ifany"))
-cat("vivienda_precaria  — tabla :\n"); print(table(nuevas_train_hog$vivienda_precaria, useNA = "ifany"))
-cat("sin_agua_red       — tabla :\n"); print(table(nuevas_train_hog$sin_agua_red, useNA = "ifany"))
-cat("sin_sanitario      — tabla :\n"); print(table(nuevas_train_hog$sin_sanitario, useNA = "ifany"))
-cat("cuartos_por_persona— rango :", range(nuevas_train_hog$cuartos_por_persona, na.rm = TRUE),
-    "| NAs:", sum(is.na(nuevas_train_hog$cuartos_por_persona)), "\n\n")
-
-cat("--- Desde personas ---\n")
-cat("jefe_edad          — rango :", range(nuevas_train_per$jefe_edad, na.rm = TRUE),
-    "| NAs:", sum(is.na(nuevas_train_per$jefe_edad)), "\n")
-cat("jefe_cuenta_propia — tabla :\n"); print(table(nuevas_train_per$jefe_cuenta_propia, useNA = "ifany"))
-cat("jefe_anos_educ     — rango :", range(nuevas_train_per$jefe_anos_educ, na.rm = TRUE),
-    "| NAs:", sum(is.na(nuevas_train_per$jefe_anos_educ)), "\n")
-cat("jefe_sin_pension   — tabla :\n"); print(table(nuevas_train_per$jefe_sin_pension, useNA = "ifany"))
-cat("prop_subsidiado    — rango :", range(nuevas_train_per$prop_subsidiado, na.rm = TRUE), "\n")
-cat("tiene_remesas      — tabla :\n"); print(table(nuevas_train_per$tiene_remesas, useNA = "ifany"))
-cat("tiene_pension_ing  — tabla :\n"); print(table(nuevas_train_per$tiene_pension_ing, useNA = "ifany"))
-cat("prop_subempleado   — rango :", range(nuevas_train_per$prop_subempleado, na.rm = TRUE),
-    "| NAs:", sum(is.na(nuevas_train_per$prop_subempleado)), "\n\n")
+# Resumen compacto: para cada columna nueva muestra NAs + estadística breve.
+# Esto escala automáticamente cuando se agregan más features.
+resumen_features <- function(df, nombre) {
+  cat("\n---", nombre, "— columnas:", ncol(df), "---\n")
+  for (col in setdiff(names(df), "id")) {
+    x <- df[[col]]
+    n_na <- sum(is.na(x))
+    if (is.numeric(x)) {
+      rng <- if (all(is.na(x))) c(NA, NA) else range(x, na.rm = TRUE)
+      cat(sprintf("  %-25s NAs=%6d | rango=[%.3g, %.3g]\n", col, n_na, rng[1], rng[2]))
+    } else {
+      cat(sprintf("  %-25s NAs=%6d | niveles=%d\n", col, n_na, length(unique(x))))
+    }
+  }
+}
+resumen_features(nuevas_train_hog, "Desde hogares")
+resumen_features(nuevas_train_per, "Desde personas")
 
 
 # ============================================================
@@ -232,10 +229,49 @@ cat("prop_subempleado   — rango :", range(nuevas_train_per$prop_subempleado, n
 # test sí conserva id → basta con left_join directo.
 
 nuevas_vars <- c(
+  # === Desde hogares_raw (build_nuevas_hogares) ===
   "zona_rural", "vivienda_precaria", "sin_agua_red", "sin_sanitario",
-  "cuartos_por_persona", "jefe_edad", "jefe_cuenta_propia",
-  "jefe_anos_educ", "jefe_sin_pension", "prop_subsidiado",
-  "tiene_remesas", "tiene_pension_ing", "prop_subempleado"
+  "cuartos_por_persona", "lp_hogar", "li_hogar", "lp_pc", "li_pc",
+  "npersug", "nper_vs_ug",
+
+  # === Desde personas_raw: perfil jefe ===
+  "jefe_edad", "jefe_cuenta_propia", "jefe_anos_educ", "jefe_sin_pension",
+  "jefe_horas", "jefe_tam_empresa", "jefe_meses_trabajo",
+  "jefe_seg_trabajo", "jefe_mujer",
+
+  # === Cónyuge ===
+  "conyuge_existe", "conyuge_ocupado", "conyuge_horas", "conyuge_anos_educ",
+
+  # === Características generales del hogar ===
+  "prop_subsidiado", "tiene_remesas", "tiene_pension_ing", "prop_subempleado",
+
+  # === Diversificación de ingresos ===
+  "n_fuentes_ingreso", "prop_trabajo_sec",
+
+  # === Subsidios mensuales P6585 ===
+  "prop_sub_transp", "prop_sub_alim", "prop_sub_fam", "prop_sub_educ",
+  "any_sub_mensual",
+
+  # === Primas anuales P6630 ===
+  "total_primas_hogar", "max_primas_persona",
+
+  # === Transferencias y ayudas ===
+  "total_ayudas_hogar", "prop_p7500s2", "prop_p7500s3", "prop_p7505",
+
+  # === Horas trabajadas ===
+  "horas_mean_hog", "horas_max_hog", "horas_sd_hog", "total_horas_hog",
+
+  # === Tamaño empresa ===
+  "empresa_max_hog", "empresa_mean_hog",
+
+  # === Estabilidad laboral ===
+  "meses_trabajo_mean_hog", "meses_trabajo_max_hog",
+
+  # === Segundo trabajo ===
+  "prop_seg_trabajo", "horas_seg_trabajo_mean",
+
+  # === Demográficos del hogar ===
+  "prop_mujeres", "prop_minoria_etn"
 )
 
 train <- train_hogares %>%
@@ -313,3 +349,128 @@ nas_train_final <- sum(sapply(train, anyNA))
 nas_test_final  <- sum(sapply(select(test, -id), anyNA))
 cat("\nNAs en train tras imputación:", nas_train_final, "\n")
 cat("NAs en test  tras imputación:", nas_test_final,  "\n")
+
+
+# ============================================================
+# 6. Interacciones explícitas
+# ============================================================
+# LightGBM captura interacciones automáticamente via splits,
+# pero agregarlas como features mejora el aprendizaje en pocos
+# árboles y ayuda también a modelos lineales (Elastic Net).
+#
+# Selección basada en conocimiento del dominio colombiano:
+#   - Rural + informal  → pobreza estructural agraria
+#   - Educación × edad  → ciclo de vida laboral del jefe
+#   - Hacinamiento × servicios → calidad multidimensional
+#   - Lp_pc × dependencia → presión económica real
+#   - Subsidiado × desempleo → vulnerabilidad combinada
+
+make_interactions <- function(df) {
+  df %>%
+    mutate(
+      # Rural × informalidad laboral
+      int_rural_informal = as.numeric(zona_rural) * prop_informal,
+
+      # Educación del jefe × edad (ciclo de vida)
+      int_educ_edad_jefe = jefe_anos_educ * jefe_edad,
+
+      # Hacinamiento × servicios faltantes (proxy de precariedad)
+      int_hacin_servicios = if ("n_servicios" %in% names(df)) {
+        hacinamiento * (5 - n_servicios)
+      } else {
+        hacinamiento
+      },
+
+      # Línea per cápita × proporción de dependientes
+      int_lppc_dependiente = lp_pc * prop_dependiente,
+
+      # Afiliación subsidiada × tasa de desempleo del hogar
+      int_subsid_desempleo = prop_subsidiado * tasa_desempleo_hogar
+    )
+}
+
+train <- make_interactions(train)
+test  <- make_interactions(test)
+
+interacciones <- c(
+  "int_rural_informal", "int_educ_edad_jefe", "int_hacin_servicios",
+  "int_lppc_dependiente", "int_subsid_desempleo"
+)
+
+cat("\n-- Interacciones creadas --\n")
+for (v in interacciones) {
+  cat(sprintf("%-22s | rango train: [%.3f, %.3f] | NAs: %d\n",
+              v,
+              min(train[[v]], na.rm = TRUE),
+              max(train[[v]], na.rm = TRUE),
+              sum(is.na(train[[v]]))))
+}
+
+
+# ============================================================
+# 7. Target encoding de Dominio (KFold-safe)
+# ============================================================
+# Dominio tiene ~25 niveles (ciudades + resto urbano/rural). Un
+# one-hot genera muchas columnas dispersas. El target encoding
+# reemplaza cada nivel por la tasa de pobreza del grupo, lo que
+# da una señal densa y ordinal que los árboles explotan mejor.
+#
+# Para evitar data leakage usamos K-fold: la codificación del
+# fold k se calcula SOLO con los otros folds. Agregamos smoothing
+# bayesiano para manejar niveles con pocas observaciones:
+#     te = (n_i * mean_i + m * global_mean) / (n_i + m)
+# donde m es el "peso" del prior (más alto → más regularización).
+
+if ("Dominio" %in% names(train)) {
+
+  set.seed(2025)
+  K  <- 5
+  m  <- 20   # fuerza del prior
+  global_rate <- mean(train$Pobre == "Yes")
+
+  folds_te <- sample(rep(seq_len(K), length.out = nrow(train)))
+
+  train$dominio_te <- NA_real_
+
+  for (k in seq_len(K)) {
+    idx_val   <- which(folds_te == k)
+    idx_train <- which(folds_te != k)
+
+    # Estadísticas por Dominio solo con los folds de entrenamiento
+    stats_k <- data.frame(
+      Dominio = train$Dominio[idx_train],
+      y       = as.integer(train$Pobre[idx_train] == "Yes")
+    ) %>%
+      group_by(Dominio) %>%
+      summarize(n_k = n(), mean_k = mean(y), .groups = "drop") %>%
+      mutate(te_k = (n_k * mean_k + m * global_rate) / (n_k + m))
+
+    # Aplicar al fold de validación
+    map_k <- setNames(stats_k$te_k, as.character(stats_k$Dominio))
+    train$dominio_te[idx_val] <- map_k[as.character(train$Dominio[idx_val])]
+    train$dominio_te[idx_val][is.na(train$dominio_te[idx_val])] <- global_rate
+  }
+
+  # Para test: encoding global usando TODO train (no hay leakage hacia test)
+  stats_global <- data.frame(
+    Dominio = train$Dominio,
+    y       = as.integer(train$Pobre == "Yes")
+  ) %>%
+    group_by(Dominio) %>%
+    summarize(n_g = n(), mean_g = mean(y), .groups = "drop") %>%
+    mutate(te_g = (n_g * mean_g + m * global_rate) / (n_g + m))
+
+  map_global <- setNames(stats_global$te_g, as.character(stats_global$Dominio))
+  test$dominio_te <- map_global[as.character(test$Dominio)]
+  test$dominio_te[is.na(test$dominio_te)] <- global_rate
+
+  cat("\n-- Target encoding de Dominio --\n")
+  cat("Tasa global de pobreza:", round(global_rate, 4), "\n")
+  cat("Rango dominio_te train:", round(range(train$dominio_te), 4), "\n")
+  cat("Rango dominio_te test :", round(range(test$dominio_te),  4), "\n")
+  cat("NAs en dominio_te train:", sum(is.na(train$dominio_te)), "\n")
+  cat("NAs en dominio_te test :", sum(is.na(test$dominio_te)),  "\n")
+
+} else {
+  cat("\nDominio no encontrado; target encoding omitido.\n")
+}

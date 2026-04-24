@@ -25,31 +25,51 @@
 # ============================================================
 # 1. Preparación de matrices para LightGBM
 # ============================================================
-# LightGBM requiere matrices numéricas. Usamos model.matrix()
-# para convertir los factores en dummies (expansión completa,
-# sin intercepto) de forma consistente entre train y test.
+# LightGBM soporta features categóricas NATIVAMENTE: internamente
+# busca splits óptimos sobre subconjuntos de categorías usando
+# el algoritmo de Fisher (1958), lo cual es más potente que
+# expandir a dummies (que solo permite splits "una categoría vs
+# el resto"). Además reduce drásticamente la dimensionalidad
+# (Dominio pasa de ~25 columnas one-hot a 1 columna entera).
+#
+# Requisitos:
+#   - Las factor-columns deben estar codificadas como enteros
+#     no negativos (usamos 0-indexed).
+#   - train y test deben compartir EL MISMO mapeo nivel → código
+#     (de lo contrario, "Bogotá" podría ser 3 en train y 7 en test
+#     y el modelo haría predicciones sin sentido).
 
-# Predictores de train (excluimos la variable respuesta)
 pred_vars <- setdiff(names(train), "Pobre")
 
-X_train <- model.matrix(~ . - 1, data = train[, pred_vars])
-y_train  <- as.integer(train$Pobre == "Yes")   # 1 = pobre, 0 = no pobre
+cols_factor  <- pred_vars[sapply(train[pred_vars], is.factor)]
+cols_numeric <- setdiff(pred_vars, cols_factor)
 
-# Predictores de test (excluimos id, que no es predictor)
-X_test_raw <- model.matrix(~ . - 1, data = test %>% select(-id))
-
-# Alineación defensiva de columnas: si alguna dummy aparece en
-# train pero no en test (nivel sin representación), la añadimos
-# con cero para evitar errores al predecir.
-cols_faltantes <- setdiff(colnames(X_train), colnames(X_test_raw))
-if (length(cols_faltantes) > 0) {
-  mat_extra <- matrix(0,
-                      nrow = nrow(X_test_raw),
-                      ncol = length(cols_faltantes),
-                      dimnames = list(NULL, cols_faltantes))
-  X_test_raw <- cbind(X_test_raw, mat_extra)
+cat("Predictores numéricos   :", length(cols_numeric), "\n")
+cat("Predictores categóricos :", length(cols_factor),  "\n")
+if (length(cols_factor) > 0) {
+  cat("Categóricos:", paste(cols_factor, collapse = ", "), "\n")
 }
-X_test <- X_test_raw[, colnames(X_train), drop = FALSE]
+
+# Alineación de niveles: unión de los niveles vistos en train y test,
+# para que el código entero sea consistente entre ambas bases.
+for (col in cols_factor) {
+  niveles <- union(levels(train[[col]]), levels(test[[col]]))
+  train[[col]] <- factor(train[[col]], levels = niveles)
+  test[[col]]  <- factor(test[[col]],  levels = niveles)
+}
+
+# Matriz numérica: columnas numéricas tal cual, factores → entero 0-indexed.
+to_lgbm_matrix <- function(df) {
+  m <- matrix(NA_real_, nrow = nrow(df), ncol = length(pred_vars),
+              dimnames = list(NULL, pred_vars))
+  for (col in cols_numeric) m[, col] <- as.numeric(df[[col]])
+  for (col in cols_factor)  m[, col] <- as.integer(df[[col]]) - 1L
+  m
+}
+
+X_train <- to_lgbm_matrix(train)
+X_test  <- to_lgbm_matrix(test)
+y_train <- as.integer(train$Pobre == "Yes")   # 1 = pobre, 0 = no pobre
 
 # ---------------------Verificación---------------------------
 
@@ -64,10 +84,14 @@ cat("Distribución de y_train:\n")
 print(table(y_train))
 cat("Proporción de pobres:", round(mean(y_train), 4), "\n\n")
 
-# Dataset LightGBM completo (se reutiliza en todos los modelos)
+# Dataset LightGBM completo (se reutiliza en todos los modelos).
+# feature_pre_filter = FALSE permite cambiar min_data_in_leaf entre
+# modelos sobre el mismo Dataset sin recrearlo.
 dtrain_full <- lgb.Dataset(
-  data  = X_train,
-  label = y_train
+  data                = X_train,
+  label               = y_train,
+  categorical_feature = cols_factor,
+  params              = list(feature_pre_filter = FALSE)
 )
 
 
@@ -247,8 +271,9 @@ for (k in seq_along(folds_C)) {
   train_idx <- setdiff(seq_len(length(y_train)), val_idx)
 
   dtrain_k <- lgb.Dataset(
-    data  = X_train[train_idx, , drop = FALSE],
-    label = y_train[train_idx]
+    data                = X_train[train_idx, , drop = FALSE],
+    label               = y_train[train_idx],
+    categorical_feature = cols_factor
   )
 
   model_k <- lgb.train(
@@ -320,7 +345,12 @@ y_down <- y_train[idx_ds]
 cat("Dataset downsampled:", length(y_down),
     "obs | Pos:", sum(y_down), "| Neg:", sum(1 - y_down), "\n")
 
-dtrain_down <- lgb.Dataset(data = X_down, label = y_down)
+dtrain_down <- lgb.Dataset(
+  data                = X_down,
+  label               = y_down,
+  categorical_feature = cols_factor,
+  params              = list(feature_pre_filter = FALSE)
+)
 
 # Parámetros sin scale_pos_weight (los datos ya están balanceados)
 params_D <- modifyList(params_base, list(scale_pos_weight = 1))
@@ -359,8 +389,9 @@ for (k in seq_along(folds_D)) {
   idx_k     <- sort(c(pos_k, neg_k_ds))
 
   dtrain_k <- lgb.Dataset(
-    data  = X_train[idx_k, , drop = FALSE],
-    label = y_train[idx_k]
+    data                = X_train[idx_k, , drop = FALSE],
+    label               = y_train[idx_k],
+    categorical_feature = cols_factor
   )
 
   model_k <- lgb.train(
@@ -518,20 +549,182 @@ cat("Modelo D guardado en:", path_D, "\n")
 
 
 # ============================================================
+# 3E. Modelo E — Random search ampliado + OOF F1 directo
+# ============================================================
+# A diferencia de A–D (que seleccionan por AUC y luego ajustan
+# umbral), Modelo E optimiza F1 directamente vía OOF:
+#   - Explora un espacio MÁS grande (6 hiperparámetros).
+#   - En cada trial hace CV de 5 folds y evalúa F1 con el mejor
+#     umbral de cada configuración (búsqueda conjunta).
+#   - Random search con 40 trials es ~equivalente a Bayesian opt
+#     para 6 parámetros (Bergstra & Bengio 2012).
+
+N_TRIALS_E <- 20
+set.seed(2025)
+
+# Espacio de búsqueda
+search_space_E <- data.frame(
+  num_leaves        = sample(c(31, 63, 95, 127, 191), N_TRIALS_E, replace = TRUE),
+  learning_rate     = runif(N_TRIALS_E, 0.01, 0.08),
+  feature_fraction  = runif(N_TRIALS_E, 0.6, 0.95),
+  bagging_fraction  = runif(N_TRIALS_E, 0.6, 0.95),
+  min_data_in_leaf  = sample(c(10, 20, 50, 100), N_TRIALS_E, replace = TRUE),
+  lambda_l2         = 10 ^ runif(N_TRIALS_E, -2, 1)     # 0.01 – 10
+)
+
+cat("\n============================================================\n")
+cat(" Modelo E — Random search de", N_TRIALS_E, "trials\n")
+cat("============================================================\n")
+
+# Helper: dado un vector de probs y etiquetas, busca el mejor F1
+best_f1_over_thresholds <- function(probs, y, grid = seq(0.1, 0.7, by = 0.01)) {
+  best <- list(threshold = 0.5, f1 = 0)
+  for (thr in grid) {
+    pred <- as.integer(probs >= thr)
+    tp <- sum(pred == 1 & y == 1)
+    fp <- sum(pred == 1 & y == 0)
+    fn <- sum(pred == 0 & y == 1)
+    prec <- if (tp + fp > 0) tp / (tp + fp) else 0
+    rec  <- if (tp + fn > 0) tp / (tp + fn) else 0
+    f1   <- if (prec + rec > 0) 2 * prec * rec / (prec + rec) else 0
+    if (f1 > best$f1) best <- list(threshold = thr, f1 = f1)
+  }
+  best
+}
+
+# Folds compartidos entre trials (comparación justa)
+set.seed(2025)
+folds_E <- createFolds(y_train, k = 5, returnTrain = FALSE)
+
+resultados_E <- vector("list", N_TRIALS_E)
+
+for (t in seq_len(N_TRIALS_E)) {
+
+  params_t <- list(
+    objective        = "binary",
+    metric           = "binary_logloss",
+    num_leaves       = search_space_E$num_leaves[t],
+    learning_rate    = search_space_E$learning_rate[t],
+    feature_fraction = search_space_E$feature_fraction[t],
+    bagging_fraction = search_space_E$bagging_fraction[t],
+    bagging_freq     = 5,
+    min_data_in_leaf = search_space_E$min_data_in_leaf[t],
+    lambda_l2        = search_space_E$lambda_l2[t],
+    scale_pos_weight = pos_weight_lgbm,
+    verbose          = -1
+  )
+
+  # lgb.cv pasándole nuestros folds: así podemos reutilizar los
+  # boosters entrenados internamente para calcular OOF, en vez de
+  # reentrenar otros 5 modelos a mano (ahorra ~40% del tiempo del loop).
+  cv_t <- lgb.cv(
+    params                = params_t,
+    data                  = dtrain_full,
+    nrounds               = 2000,
+    folds                 = folds_E,
+    early_stopping_rounds = 50,
+    verbose               = -1
+  )
+  best_iter_t <- cv_t$best_iter
+
+  # OOF probs reusando los boosters de cv_t (uno por fold).
+  oof_t <- numeric(length(y_train))
+  for (k in seq_along(folds_E)) {
+    val_idx <- folds_E[[k]]
+    bst_k   <- cv_t$boosters[[k]]
+    if (!inherits(bst_k, "lgb.Booster") && is.list(bst_k) && "booster" %in% names(bst_k)) {
+      bst_k <- bst_k$booster
+    }
+    oof_t[val_idx] <- predict(
+      bst_k,
+      X_train[val_idx, , drop = FALSE],
+      num_iteration = best_iter_t
+    )
+  }
+
+  # Mejor F1 sobre umbrales
+  bt <- best_f1_over_thresholds(oof_t, y_train)
+
+  resultados_E[[t]] <- list(
+    trial     = t,
+    params    = params_t,
+    best_iter = best_iter_t,
+    threshold = bt$threshold,
+    oof_f1    = bt$f1,
+    oof_probs = oof_t
+  )
+
+  cat(sprintf(
+    "Trial %2d/%d | leaves=%3d lr=%.3f ff=%.2f bf=%.2f min=%3d l2=%.3f | iter=%3d thr=%.2f F1=%.4f\n",
+    t, N_TRIALS_E,
+    params_t$num_leaves, params_t$learning_rate, params_t$feature_fraction,
+    params_t$bagging_fraction, params_t$min_data_in_leaf, params_t$lambda_l2,
+    best_iter_t, bt$threshold, bt$f1
+  ))
+}
+
+# Mejor trial
+f1_vec <- sapply(resultados_E, function(r) r$oof_f1)
+best_t <- which.max(f1_vec)
+best_E <- resultados_E[[best_t]]
+
+cat("\n--- Mejor trial Modelo E ---\n")
+cat("Trial        :", best_t, "\n")
+cat("OOF F1       :", round(best_E$oof_f1, 4), "\n")
+cat("Umbral óptimo:", best_E$threshold, "\n")
+cat("Iteraciones  :", best_E$best_iter, "\n\n")
+
+# Modelo final entrenado sobre todo train
+set.seed(2025)
+model_E <- lgb.train(
+  params  = best_E$params,
+  data    = dtrain_full,
+  nrounds = best_E$best_iter
+)
+
+oof_probs_E <- best_E$oof_probs
+preds_E     <- predict(model_E, X_test)
+
+predictSample_E <- test %>%
+  transmute(
+    id    = id,
+    pobre = ifelse(preds_E >= best_E$threshold, 1, 0)
+  )
+
+cat("Distribución predicciones Modelo E (random search + F1 OOF):\n")
+print(table(predictSample_E$pobre))
+
+name_E <- paste0(
+  "LGBM_randsearch_F1_",
+  "leaves_", best_E$params$num_leaves,
+  "_iter_",  best_E$best_iter,
+  "_threshold_", fmt_p(best_E$threshold, 3),
+  ".csv"
+)
+path_E <- file.path("02_outputs", "predictions", name_E)
+write.csv(predictSample_E, path_E, row.names = FALSE)
+cat("Modelo E guardado en:", path_E, "\n\n")
+
+
+# ============================================================
 # 6. Guardar probabilidades para ensemble con Random Forest
 # ============================================================
 # Exportamos las probabilidades OOF (sobre train) y sobre test
-# del Modelo C (scale_pos_weight + mejor AUC), que es el más
-# fuerte de los cuatro. El script 05_RandomForest.R las carga
-# para construir el ensemble RF + LightGBM.
+# del Modelo E (random search optimizando F1 directo). También
+# guardamos las del Modelo C para retro-compatibilidad con el RF.
 
 saveRDS(
   list(
-    oof_probs  = oof_probs_C,   # probabilidades out-of-fold en train
-    test_probs = preds_C,        # probabilidades sobre test
-    y_train    = y_train          # etiquetas reales de train (0/1)
+    # Modelo C (retro-compatibilidad con 05_RandomForest.R)
+    oof_probs    = oof_probs_C,
+    test_probs   = preds_C,
+    # Modelo E (mejor según F1 OOF — úsese en stacking)
+    oof_probs_E  = oof_probs_E,
+    test_probs_E = preds_E,
+    threshold_E  = best_E$threshold,
+    y_train      = y_train
   ),
   file = file.path("02_outputs", "lgbm_probs_ensemble.rds")
 )
 
-cat("Probabilidades LightGBM guardadas para ensemble.\n")
+cat("Probabilidades LightGBM (C y E) guardadas para ensemble.\n")

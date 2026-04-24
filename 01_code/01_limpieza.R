@@ -290,6 +290,9 @@ objetos_a_conservar <- c(
   # Bases finales
   "train", "test",
   
+  # Flags de selección de algoritmos (definidos en 00_rundirectory.R)
+  "RUN_ELASTIC_NET", "RUN_LIGHTGBM", "RUN_RANDOM_FOREST", "RUN_STACKING",
+
   # Funciones (se conservan para poder seguir usando el script)
   "load_bases",
   "pre_process_personas",
@@ -305,4 +308,3 @@ objetos_a_conservar <- c(
 )
 
 rm(list = setdiff(ls(), objetos_a_conservar))
-

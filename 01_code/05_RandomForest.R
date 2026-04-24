@@ -35,6 +35,13 @@
 # 1. Preparación
 # ============================================================
 
+# Copias de trabajo (test conserva id para el archivo de envío)
+train_rf <- train
+test_rf  <- test
+
+cat("NAs en train_rf:", sum(sapply(train_rf, anyNA)), "\n")
+cat("NAs en test_rf :", sum(sapply(select(test_rf, -id), anyNA)), "\n\n")
+
 # --- Peso por desbalance de clase ---
 # Mismo criterio que en LightGBM: peso(Yes) = N_No / N_Yes
 pos_weight_rf <- sum(train_rf$Pobre == "No") / sum(train_rf$Pobre == "Yes")
@@ -106,8 +113,7 @@ for (i in seq_len(nrow(grid_rf))) {
     class.weights = c("No" = 1, "Yes" = pos_weight_rf),
     probability   = TRUE,       # predice probabilidades, no clases
     importance    = "none",     # desactivado en grid search (costo)
-    seed          = 2025,
-    num.threads   = 1           # fijamos hilo para reproducibilidad
+    num.threads   = parallel::detectCores() - 1
   )
 
   # Probabilidades OOB para la clase positiva
@@ -162,7 +168,7 @@ set.seed(2025)
 model_rf_A <- ranger(
   formula       = Pobre ~ .,
   data          = train_rf,
-  num.trees     = 500,
+  num.trees     = 1000,
   mtry          = best_rf$mtry,
   min.node.size = best_rf$min.node.size,
   class.weights = c("No" = 1, "Yes" = pos_weight_rf),
@@ -371,3 +377,22 @@ if (!is.null(lgbm_test_probs)) {
   write.csv(predictSample_rfC, path_rfC, row.names = FALSE)
   cat("Modelo C guardado en:", path_rfC, "\n")
 }
+
+
+# ============================================================
+# 7. Guardar probabilidades OOB y test del RF para stacking
+# ============================================================
+# 06_Stacking.R usa estas probs como features del meta-learner.
+# OOB = predicciones honestas sobre train (cada árbol vota solo
+# sobre observaciones que no usó en su bootstrap).
+
+saveRDS(
+  list(
+    oob_probs  = oob_probs_B,    # probs OOB sobre train (Modelo B)
+    test_probs = probs_test_rf,  # probs sobre test
+    y_train    = as.integer(train_rf$Pobre == "Yes")
+  ),
+  file = file.path("02_outputs", "rf_probs_ensemble.rds")
+)
+
+cat("Probabilidades RF guardadas para stacking.\n")

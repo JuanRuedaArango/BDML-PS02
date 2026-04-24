@@ -560,8 +560,40 @@ build_nuevas_hogares <- function(hogares_raw) {
         NA_real_
       )
     ) %>%
+    mutate(
+      # Línea de pobreza (Lp) y extrema pobreza (Li) del hogar.
+      # Reflejan composición del hogar y región → legítimas como features:
+      # NO revelan ingreso, solo el umbral que define pobreza.
+      lp_hogar = if ("Lp" %in% names(.)) as.numeric(Lp) else NA_real_,
+      li_hogar = if ("Li" %in% names(.)) as.numeric(Li) else NA_real_,
+
+      # Líneas per cápita: mejor comparables entre hogares de
+      # distintos tamaños. Lp_pc baja implica hogar grande en zona barata.
+      lp_pc = ifelse(
+        !is.na(lp_hogar) & !is.na(Nper) & Nper > 0,
+        lp_hogar / Nper, NA_real_
+      ),
+      li_pc = ifelse(
+        !is.na(li_hogar) & !is.na(Nper) & Nper > 0,
+        li_hogar / Nper, NA_real_
+      ),
+
+      # Tamaño del hogar "unidad de gasto": concepto distinto de Nper
+      # (personas_unidad_gasto solo incluye miembros que comparten gastos).
+      # Útil como denominador y como proxy de estructura familiar.
+      npersug = if ("Npersug" %in% names(.)) as.numeric(Npersug) else NA_real_,
+
+      # Diferencia Nper - Npersug: personas en el hogar que NO comparten
+      # gastos (empleadas domésticas internas, pensionistas, etc.)
+      nper_vs_ug = ifelse(
+        !is.na(Nper) & !is.na(npersug),
+        Nper - npersug, NA_real_
+      )
+    ) %>%
     select(id, zona_rural, vivienda_precaria, sin_agua_red,
-           sin_sanitario, cuartos_por_persona)
+           sin_sanitario, cuartos_por_persona,
+           lp_hogar, li_hogar, lp_pc, li_pc,
+           npersug, nper_vs_ug)
 }
 
 
@@ -610,48 +642,161 @@ build_nuevas_hogares <- function(hogares_raw) {
 # ------------------------------------------------------------
 build_nuevas_personas <- function(personas_raw) {
 
-  tiene_p7510s3 <- "P7510s3" %in% names(personas_raw)
+  # ------------------------------------------------------------
+  # Helpers defensivos (robustos ante columnas faltantes)
+  # ------------------------------------------------------------
+  # eq1_si_existe(): vector lógico TRUE donde la columna == 1.
+  # Si la columna no existe, devuelve FALSE del tamaño correcto.
+  eq1_si_existe <- function(col_name) {
+    if (col_name %in% names(personas_raw)) {
+      col <- personas_raw[[col_name]]
+      !is.na(col) & col == 1
+    } else {
+      rep(FALSE, nrow(personas_raw))
+    }
+  }
 
+  # num_si_existe(): columna numérica si existe, si no NA_real_.
+  num_si_existe <- function(col_name) {
+    if (col_name %in% names(personas_raw)) {
+      suppressWarnings(as.numeric(personas_raw[[col_name]]))
+    } else {
+      rep(NA_real_, nrow(personas_raw))
+    }
+  }
+
+  # n_cols_eq1(): para una familia de columnas "<prefix><sufijo>",
+  # cuenta cuántas están == 1 por fila (0 si ninguna existe).
+  n_cols_eq1 <- function(prefix, sufijos) {
+    cols <- paste0(prefix, sufijos)
+    cols <- intersect(cols, names(personas_raw))
+    if (length(cols) == 0) return(rep(0L, nrow(personas_raw)))
+    mat <- as.matrix(personas_raw[, cols, drop = FALSE])
+    suppressWarnings(storage.mode(mat) <- "numeric")
+    rowSums(mat == 1 & !is.na(mat))
+  }
+
+  # safe_max / safe_sd: versiones robustas que devuelven NA_real_
+  # en lugar de -Inf o warning cuando todos los valores son NA.
+  safe_max <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+  safe_sd  <- function(x) if (sum(!is.na(x)) > 1) sd(x, na.rm = TRUE) else NA_real_
+
+  # ------------------------------------------------------------
+  # Precomputar vectores de columnas variables
+  # ------------------------------------------------------------
+  remesas_p6620   <- eq1_si_existe("P6620")
+  remesas_p7510s3 <- eq1_si_existe("P7510s3")
+
+  # Primas anuales P6630s1..s4, s6 (s5 no existe en GEIH) — conteo por persona
+  n_primas_persona <- n_cols_eq1("P6630s", c(1:4, 6))
+
+  # Transferencias y ayudas P7510s1..s7 — conteo por persona
+  n_ayudas_persona <- n_cols_eq1("P7510s", 1:7)
+
+  # Otros transfers sueltos
+  t_p7500s2 <- eq1_si_existe("P7500s2")
+  t_p7500s3 <- eq1_si_existe("P7500s3")
+  t_p7505   <- eq1_si_existe("P7505")
+
+  # Subsidios mensuales P6585s1..s4
+  sub_transp <- eq1_si_existe("P6585s1")
+  sub_alim   <- eq1_si_existe("P6585s2")
+  sub_fam    <- eq1_si_existe("P6585s3")
+  sub_educ   <- eq1_si_existe("P6585s4")
+
+  # Numéricas laborales
+  hrs_trabaja     <- num_si_existe("P6800")  # horas semanales trabajo principal
+  tam_empresa     <- num_si_existe("P6870")  # tamaño empresa (cat ordinal 1-9)
+  meses_trabajo   <- num_si_existe("P6426")  # meses en trabajo actual
+  hrs_seg_trabajo <- num_si_existe("P7090")  # horas segundo trabajo
+
+  # Segundo trabajo
+  seg_trabajo <- eq1_si_existe("P7040")
+
+  # Demográficos
+  es_mujer <- if ("P6020" %in% names(personas_raw)) {
+    !is.na(personas_raw$P6020) & personas_raw$P6020 == 2
+  } else rep(FALSE, nrow(personas_raw))
+
+  # P6100: pertenencia étnica (1=indígena, 2=raizal, 3=palenquero, 4=negro,
+  # 5=mestizo, 6=ninguna). Agrupamos como "minoría étnica" 1-4.
+  es_minoria <- if ("P6100" %in% names(personas_raw)) {
+    !is.na(personas_raw$P6100) & personas_raw$P6100 %in% 1:4
+  } else rep(FALSE, nrow(personas_raw))
+
+  # ------------------------------------------------------------
+  # Construcción de features a nivel hogar
+  # ------------------------------------------------------------
   personas_raw %>%
     mutate(
       is_head        = !is.na(P6050) & P6050 == 1,
+      is_spouse      = !is.na(P6050) & P6050 == 2,
       is_ocupado     = !is.na(Oc),
 
-      # Trabajador por cuenta propia
+      # Base original
       cuenta_propia  = !is.na(P6430) & P6430 == 4,
-
-      # Años de educación (puede ser NA si no aplica)
       anos_educ      = suppressWarnings(as.numeric(P6210s1)),
-
-      # Ocupado sin cotización a pensión → informal
       sin_pension_oc = is_ocupado & (is.na(P6920) | P6920 != 1),
-
-      # Régimen Subsidiado de salud (proxy directo de vulnerabilidad)
       subsidiado     = !is.na(P6090) & P6090 == 3,
-
-      # Recibe remesas del exterior
-      remesas        = (!is.na(P6620) & P6620 == 1) |
-                       (if (tiene_p7510s3) (!is.na(P7510s3) & P7510s3 == 1)
-                        else FALSE),
-
-      # Recibe ingresos de pensión
-      pension_ing    = !is.na(P6610) & P6610 == 1,
-
-      # Subempleo (por ingresos o por horas)
+      remesas        = remesas_p6620 | remesas_p7510s3,
+      pension_ing    = eq1_si_existe("P6610"),
       subempleado    = is_ocupado & (
                          (!is.na(P7422) & P7422 == 1) |
                          (!is.na(P7472) & P7472 == 1)
-                       )
+                       ),
+
+      # Fuentes de ingreso
+      ing_trabajo_sec  = eq1_si_existe("P6510"),
+      ing_agropecuario = eq1_si_existe("P6545"),
+      ing_arriendo     = eq1_si_existe("P6580"),
+      ing_jubilacion   = eq1_si_existe("P6600"),
+
+      # Subsidios mensuales / anuales / ayudas (vectores precomputados)
+      sub_transp_v = sub_transp,
+      sub_alim_v   = sub_alim,
+      sub_fam_v    = sub_fam,
+      sub_educ_v   = sub_educ,
+      n_primas_v   = n_primas_persona,
+      n_ayudas_v   = n_ayudas_persona,
+      t_p7500s2_v  = t_p7500s2,
+      t_p7500s3_v  = t_p7500s3,
+      t_p7505_v    = t_p7505,
+
+      # Numéricas laborales
+      hrs_v       = hrs_trabaja,
+      emp_v       = tam_empresa,
+      meses_v     = meses_trabajo,
+      hrs2_v      = hrs_seg_trabajo,
+      seg_v       = seg_trabajo,
+
+      # Demográficos
+      mujer_v     = es_mujer,
+      minoria_v   = es_minoria
     ) %>%
     group_by(id) %>%
     summarize(
-      # --- Perfil del jefe ---
+      # === Perfil del jefe ===
       jefe_edad          = dplyr::first(P6040[is_head],     default = NA_real_),
       jefe_cuenta_propia = as.integer(any(is_head & cuenta_propia,  na.rm = TRUE)),
       jefe_anos_educ     = dplyr::first(anos_educ[is_head], default = NA_real_),
       jefe_sin_pension   = as.integer(any(is_head & sin_pension_oc, na.rm = TRUE)),
+      jefe_horas         = dplyr::first(hrs_v[is_head],     default = NA_real_),
+      jefe_tam_empresa   = dplyr::first(emp_v[is_head],     default = NA_real_),
+      jefe_meses_trabajo = dplyr::first(meses_v[is_head],   default = NA_real_),
+      jefe_seg_trabajo   = as.integer(any(is_head & seg_v,  na.rm = TRUE)),
+      jefe_mujer         = as.integer(any(is_head & mujer_v, na.rm = TRUE)),
 
-      # --- Características del hogar ---
+      # === Cónyuge ===
+      conyuge_existe     = as.integer(any(is_spouse, na.rm = TRUE)),
+      conyuge_ocupado    = as.integer(any(is_spouse & is_ocupado, na.rm = TRUE)),
+      conyuge_horas      = ifelse(any(is_spouse, na.rm = TRUE),
+                                  dplyr::first(hrs_v[is_spouse], default = NA_real_),
+                                  NA_real_),
+      conyuge_anos_educ  = ifelse(any(is_spouse, na.rm = TRUE),
+                                  dplyr::first(anos_educ[is_spouse], default = NA_real_),
+                                  NA_real_),
+
+      # === Características del hogar (existentes) ===
       prop_subsidiado    = mean(subsidiado, na.rm = TRUE),
       tiene_remesas      = as.integer(any(remesas,     na.rm = TRUE)),
       tiene_pension_ing  = as.integer(any(pension_ing, na.rm = TRUE)),
@@ -660,6 +805,57 @@ build_nuevas_personas <- function(personas_raw) {
         sum(subempleado, na.rm = TRUE) / sum(is_ocupado, na.rm = TRUE),
         NA_real_
       ),
+
+      # === Diversificación de ingresos (4 fuentes laborales básicas) ===
+      n_fuentes_ingreso  = as.integer(
+        any(ing_trabajo_sec,  na.rm = TRUE) +
+        any(ing_agropecuario, na.rm = TRUE) +
+        any(ing_arriendo,     na.rm = TRUE) +
+        any(ing_jubilacion,   na.rm = TRUE)
+      ),
+      prop_trabajo_sec   = mean(ing_trabajo_sec, na.rm = TRUE),
+
+      # === NUEVO: Subsidios mensuales (P6585s1-s4) ===
+      prop_sub_transp    = mean(sub_transp_v, na.rm = TRUE),
+      prop_sub_alim      = mean(sub_alim_v,   na.rm = TRUE),
+      prop_sub_fam       = mean(sub_fam_v,    na.rm = TRUE),
+      prop_sub_educ      = mean(sub_educ_v,   na.rm = TRUE),
+      any_sub_mensual    = as.integer(
+        any(sub_transp_v | sub_alim_v | sub_fam_v | sub_educ_v, na.rm = TRUE)
+      ),
+
+      # === NUEVO: Primas anuales (P6630s1-s6) ===
+      total_primas_hogar = sum(n_primas_v,  na.rm = TRUE),
+      max_primas_persona = safe_max(n_primas_v),
+
+      # === NUEVO: Transferencias y ayudas detalladas ===
+      total_ayudas_hogar = sum(n_ayudas_v,  na.rm = TRUE),
+      prop_p7500s2       = mean(t_p7500s2_v, na.rm = TRUE),
+      prop_p7500s3       = mean(t_p7500s3_v, na.rm = TRUE),
+      prop_p7505         = mean(t_p7505_v,   na.rm = TRUE),
+
+      # === NUEVO: Horas trabajadas en el hogar (principal) ===
+      horas_mean_hog     = mean(hrs_v,    na.rm = TRUE),
+      horas_max_hog      = safe_max(hrs_v),
+      horas_sd_hog       = safe_sd(hrs_v),
+      total_horas_hog    = sum(hrs_v,     na.rm = TRUE),
+
+      # === NUEVO: Tamaño de empresa ===
+      empresa_max_hog    = safe_max(emp_v),
+      empresa_mean_hog   = mean(emp_v, na.rm = TRUE),
+
+      # === NUEVO: Estabilidad laboral ===
+      meses_trabajo_mean_hog = mean(meses_v, na.rm = TRUE),
+      meses_trabajo_max_hog  = safe_max(meses_v),
+
+      # === NUEVO: Segundo trabajo ===
+      prop_seg_trabajo   = mean(seg_v, na.rm = TRUE),
+      horas_seg_trabajo_mean = mean(hrs2_v, na.rm = TRUE),
+
+      # === NUEVO: Demográficos del hogar ===
+      prop_mujeres       = mean(mujer_v,   na.rm = TRUE),
+      prop_minoria_etn   = mean(minoria_v, na.rm = TRUE),
+
       .groups = "drop"
     )
 }
@@ -862,4 +1058,3 @@ make_submission_name <- function(best_algorithm, model = NULL, best_cutoff = NUL
   
   return(submission_name)
 }
-

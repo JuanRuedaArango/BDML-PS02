@@ -305,3 +305,4 @@ objetos_a_conservar <- c(
 )
 
 rm(list = setdiff(ls(), objetos_a_conservar))
+

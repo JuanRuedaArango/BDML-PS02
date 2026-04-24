@@ -187,19 +187,20 @@ best_cutoff <- pr_cutoffs %>%
 best_cutoff
 
 # ============================================================
-# 9D. Comparación de F1 y umbral óptimo para los 3 Elastic Net
+# 9D. Curva F1 vs threshold para los 3 modelos Elastic Net
 # ============================================================
 
-# Esta función toma un modelo caret, extrae las predicciones
-# out-of-fold del mejor tuning y busca el umbral que maximiza F1.
-
-get_best_f1_cutoff <- function(model, model_name, positive_class = "Yes") {
+# ------------------------------------------------------------
+# Función para construir la curva F1 según el threshold
+# ------------------------------------------------------------
+get_f1_curve <- function(model, model_name, positive_class = "Yes", negative_class = "No",
+                         n_thresholds = 200) {
   
   if (is.null(model$pred)) {
     stop(
       paste0(
-        "El modelo ", model_name, " no tiene predicciones guardadas. ",
-        "Revisa que trainControl tenga savePredictions = TRUE o savePredictions = 'final'."
+        "El modelo '", model_name,
+        "' no tiene predicciones guardadas en model$pred."
       ),
       call. = FALSE
     )
@@ -207,44 +208,43 @@ get_best_f1_cutoff <- function(model, model_name, positive_class = "Yes") {
   
   pred_oof <- model$pred
   
-  # Filtrar solo la combinación óptima de hiperparámetros
-  for (param in names(model$bestTune)) {
-    pred_oof <- pred_oof[pred_oof[[param]] == model$bestTune[[param]], ]
+  # Filtrar únicamente las predicciones correspondientes
+  # al mejor tuning del modelo
+  if (!is.null(model$bestTune)) {
+    for (param in names(model$bestTune)) {
+      pred_oof <- pred_oof %>%
+        filter(.data[[param]] == model$bestTune[[param]])
+    }
   }
   
+  # Validar que exista la columna de probabilidad de la clase positiva
   if (!positive_class %in% names(pred_oof)) {
     stop(
       paste0(
-        "No existe la columna de probabilidad para la clase positiva: ",
-        positive_class,
-        ". Columnas disponibles: ",
-        paste(names(pred_oof), collapse = ", ")
+        "No existe la columna de probabilidad '", positive_class,
+        "' en model$pred del modelo '", model_name, "'."
       ),
       call. = FALSE
     )
   }
   
   y_true <- pred_oof$obs
-  prob_positive <- pred_oof[[positive_class]]
+  prob_pos <- pred_oof[[positive_class]]
   
-  thresholds <- seq(0, 1, length.out = 1000)
+  thresholds <- seq(0, 1, length.out = n_thresholds)
   
-  resultados <- lapply(thresholds, function(th) {
+  curva_f1 <- lapply(thresholds, function(th) {
     
-    y_pred <- ifelse(prob_positive >= th, positive_class, "No")
+    y_pred <- ifelse(prob_pos >= th, positive_class, negative_class)
     
     TP <- sum(y_true == positive_class & y_pred == positive_class, na.rm = TRUE)
-    FP <- sum(y_true != positive_class & y_pred == positive_class, na.rm = TRUE)
-    FN <- sum(y_true == positive_class & y_pred != positive_class, na.rm = TRUE)
+    FP <- sum(y_true == negative_class & y_pred == positive_class, na.rm = TRUE)
+    FN <- sum(y_true == positive_class & y_pred == negative_class, na.rm = TRUE)
     
-    precision <- ifelse(TP + FP == 0, 0, TP / (TP + FP))
-    recall    <- ifelse(TP + FN == 0, 0, TP / (TP + FN))
-    
-    F1 <- ifelse(
-      precision + recall == 0,
-      0,
-      2 * precision * recall / (precision + recall)
-    )
+    precision <- ifelse((TP + FP) == 0, 0, TP / (TP + FP))
+    recall    <- ifelse((TP + FN) == 0, 0, TP / (TP + FN))
+    F1        <- ifelse((precision + recall) == 0, 0,
+                        2 * precision * recall / (precision + recall))
     
     data.frame(
       modelo = model_name,
@@ -253,43 +253,121 @@ get_best_f1_cutoff <- function(model, model_name, positive_class = "Yes") {
       recall = recall,
       F1 = F1
     )
-  })
+  }) %>%
+    bind_rows()
   
-  resultados <- dplyr::bind_rows(resultados)
+  mejor_punto <- curva_f1 %>%
+    arrange(desc(F1), desc(recall), desc(precision), threshold) %>%
+    slice(1)
   
-  mejor_resultado <- resultados %>%
-    dplyr::arrange(dplyr::desc(F1)) %>%
-    dplyr::slice(1)
-  
-  return(mejor_resultado)
+  list(
+    model_name = model_name,
+    curve = curva_f1,
+    best = mejor_punto
+  )
 }
 
-best_f1_model1 <- get_best_f1_cutoff(
+# ------------------------------------------------------------
+# Función para graficar F1 vs threshold
+# ------------------------------------------------------------
+plot_f1_curve <- function(f1_obj) {
+  
+  curva <- f1_obj$curve
+  mejor <- f1_obj$best
+  
+  ggplot(curva, aes(x = threshold, y = F1)) +
+    geom_line(linewidth = 1) +
+    geom_vline(
+      xintercept = mejor$threshold,
+      linetype = "dashed"
+    ) +
+    annotate(
+      "label",
+      x = mejor$threshold,
+      y = max(curva$F1, na.rm = TRUE) * 0.98,
+      label = paste0("Threshold optimo = ", round(mejor$threshold, 4)),
+      vjust = 1,
+      hjust = 0.5
+    ) +
+    labs(
+      title = paste("F1 segun el punto de corte -", f1_obj$model_name),
+      x = "Threshold",
+      y = "F1"
+    ) +
+    theme_minimal()
+}
+
+# ------------------------------------------------------------
+# Construir curvas para los 3 modelos
+# ------------------------------------------------------------
+f1_model1 <- get_f1_curve(
   model = model1,
-  model_name = "Elastic Net Accuracy"
+  model_name = "Elastic Net - Accuracy"
 )
 
-best_f1_model2 <- get_best_f1_cutoff(
+f1_model2 <- get_f1_curve(
   model = model2,
-  model_name = "Elastic Net Sens"
+  model_name = "Elastic Net - Sens"
 )
 
-best_f1_model3 <- get_best_f1_cutoff(
+f1_model3 <- get_f1_curve(
   model = elastic_net_weighted,
-  model_name = "Elastic Net ponderado + cutoff"
+  model_name = "Elastic Net - Ponderado"
 )
 
-tabla_f1_elastic_net <- dplyr::bind_rows(
-  best_f1_model1,
-  best_f1_model2,
-  best_f1_model3
+# ------------------------------------------------------------
+# Tabla resumen con threshold óptimo y métricas
+# ------------------------------------------------------------
+tabla_resumen_f1 <- bind_rows(
+  f1_model1$best,
+  f1_model2$best,
+  f1_model3$best
 )
 
 cat("\n============================================================\n")
-cat("Comparación de umbral óptimo y F1 - Elastic Net\n")
+cat("Resumen de threshold optimo, precision, recall y F1\n")
 cat("============================================================\n")
+print(tabla_resumen_f1)
 
-print(tabla_f1_elastic_net)
+# ------------------------------------------------------------
+# Graficar
+# ------------------------------------------------------------
+grafico_f1_model1 <- plot_f1_curve(f1_model1)
+grafico_f1_model2 <- plot_f1_curve(f1_model2)
+grafico_f1_model3 <- plot_f1_curve(f1_model3)
+
+print(grafico_f1_model1)
+print(grafico_f1_model2)
+print(grafico_f1_model3)
+
+# ------------------------------------------------------------
+# Guardar gráficos
+# ------------------------------------------------------------
+dir.create("02_outputs/figures", recursive = TRUE, showWarnings = FALSE)
+
+ggsave(
+  filename = "02_outputs/figures/f1_threshold_elastic_net_accuracy.png",
+  plot = grafico_f1_model1,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+ggsave(
+  filename = "02_outputs/figures/f1_threshold_elastic_net_sens.png",
+  plot = grafico_f1_model2,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+ggsave(
+  filename = "02_outputs/figures/f1_threshold_elastic_net_ponderado.png",
+  plot = grafico_f1_model3,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
 
 # ============================================================
 # 10A. Predicción sobre test con modelo 1 (Accuracy)

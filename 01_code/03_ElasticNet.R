@@ -186,6 +186,110 @@ best_cutoff <- pr_cutoffs %>%
 
 best_cutoff
 
+# ============================================================
+# 9D. Comparación de F1 y umbral óptimo para los 3 Elastic Net
+# ============================================================
+
+# Esta función toma un modelo caret, extrae las predicciones
+# out-of-fold del mejor tuning y busca el umbral que maximiza F1.
+
+get_best_f1_cutoff <- function(model, model_name, positive_class = "Yes") {
+  
+  if (is.null(model$pred)) {
+    stop(
+      paste0(
+        "El modelo ", model_name, " no tiene predicciones guardadas. ",
+        "Revisa que trainControl tenga savePredictions = TRUE o savePredictions = 'final'."
+      ),
+      call. = FALSE
+    )
+  }
+  
+  pred_oof <- model$pred
+  
+  # Filtrar solo la combinación óptima de hiperparámetros
+  for (param in names(model$bestTune)) {
+    pred_oof <- pred_oof[pred_oof[[param]] == model$bestTune[[param]], ]
+  }
+  
+  if (!positive_class %in% names(pred_oof)) {
+    stop(
+      paste0(
+        "No existe la columna de probabilidad para la clase positiva: ",
+        positive_class,
+        ". Columnas disponibles: ",
+        paste(names(pred_oof), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  
+  y_true <- pred_oof$obs
+  prob_positive <- pred_oof[[positive_class]]
+  
+  thresholds <- seq(0, 1, length.out = 1000)
+  
+  resultados <- lapply(thresholds, function(th) {
+    
+    y_pred <- ifelse(prob_positive >= th, positive_class, "No")
+    
+    TP <- sum(y_true == positive_class & y_pred == positive_class, na.rm = TRUE)
+    FP <- sum(y_true != positive_class & y_pred == positive_class, na.rm = TRUE)
+    FN <- sum(y_true == positive_class & y_pred != positive_class, na.rm = TRUE)
+    
+    precision <- ifelse(TP + FP == 0, 0, TP / (TP + FP))
+    recall    <- ifelse(TP + FN == 0, 0, TP / (TP + FN))
+    
+    F1 <- ifelse(
+      precision + recall == 0,
+      0,
+      2 * precision * recall / (precision + recall)
+    )
+    
+    data.frame(
+      modelo = model_name,
+      threshold = th,
+      precision = precision,
+      recall = recall,
+      F1 = F1
+    )
+  })
+  
+  resultados <- dplyr::bind_rows(resultados)
+  
+  mejor_resultado <- resultados %>%
+    dplyr::arrange(dplyr::desc(F1)) %>%
+    dplyr::slice(1)
+  
+  return(mejor_resultado)
+}
+
+best_f1_model1 <- get_best_f1_cutoff(
+  model = model1,
+  model_name = "Elastic Net Accuracy"
+)
+
+best_f1_model2 <- get_best_f1_cutoff(
+  model = model2,
+  model_name = "Elastic Net Sens"
+)
+
+best_f1_model3 <- get_best_f1_cutoff(
+  model = elastic_net_weighted,
+  model_name = "Elastic Net ponderado + cutoff"
+)
+
+tabla_f1_elastic_net <- dplyr::bind_rows(
+  best_f1_model1,
+  best_f1_model2,
+  best_f1_model3
+)
+
+cat("\n============================================================\n")
+cat("Comparación de umbral óptimo y F1 - Elastic Net\n")
+cat("============================================================\n")
+
+print(tabla_f1_elastic_net)
 
 # ============================================================
 # 10A. Predicción sobre test con modelo 1 (Accuracy)

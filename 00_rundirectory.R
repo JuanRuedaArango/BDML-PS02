@@ -178,7 +178,7 @@ source("01_code/01_limpieza.R")
 source("01_code/02_feature_engineering.R")
 
 if (RUN_DESCRIPTIVO)   source("01_code/10_Estadisticas_descriptivas.R")
-if (RUN_ELASTIC_NET)   source("01_code/11_ElasticNet.R")
+if (RUN_ELASTIC_NET)   source("01_code/03_ElasticNet.R")
 if (RUN_LIGHTGBM)      source("01_code/04_LightGBM.R")
 if (RUN_RANDOM_FOREST) source("01_code/05_RandomForest.R")
 if (RUN_GLM)           source("01_code/07_GLM.R")

@@ -39,9 +39,9 @@ Los principales scripts de modelos son:
 └── 09_Bayes.R
 ````
 
-Además, el proyecto cuenta con un script principal de ejecución, denominado `rundirectory`, que permite correr el flujo completo o seleccionar partes específicas del análisis.
+Además, el proyecto cuenta con un script principal de ejecución, denominado `00_rundirectory.R`, que permite correr el flujo completo o seleccionar partes específicas del análisis.
 
-## Uso del `rundirectory`
+## Uso del `00_rundirectory.R`
 
 El archivo `rundirectory` funciona como el script maestro del proyecto. Su propósito es facilitar la reproducción del análisis completo sin que el usuario tenga que ejecutar manualmente cada archivo por separado.
 
@@ -70,7 +70,7 @@ Estos scripts se ejecutan una sola vez durante la sesión, salvo que el usuario 
 Para correr el proyecto, se debe abrir R o RStudio desde el repositorio y ejecutar el script maestro:
 
 ```r
-source("rundirectory.R")
+source("00_rundirectory.R")
 ```
 
 Una vez ejecutado, aparecerá un menú en consola con las opciones disponibles. Desde allí, el usuario puede seleccionar si desea correr todos los modelos, un modelo específico o una combinación de modelos.
@@ -96,23 +96,14 @@ Después de ejecutar una opción, el menú permite volver a seleccionar otra alt
 
 Antes de correr el proyecto, se recomienda verificar que la carpeta `Bases` exista y contenga los archivos necesarios para el análisis. Esta carpeta puede estar ubicada dentro del repositorio, en el directorio padre del repositorio o en una ruta externa definida en el equipo del usuario.
 
-También se recomienda ejecutar primero modelos individuales antes de correr todos los modelos al mismo tiempo. Algunos algoritmos pueden tardar más que otros dependiendo del tamaño de la base, la capacidad del computador y el número de hiperparámetros evaluados.
+También se recomienda ejecutar primero modelos individuales antes de correr todos los modelos al mismo tiempo. Algunos algoritmos pueden tardar más que otros dependiendo de la capacidad del computador y el número de hiperparámetros evaluados.
 
 Dado que el proyecto realiza entrenamiento de modelos y generación de predicciones, el tiempo de ejecución puede variar considerablemente. Modelos como Random Forest, LightGBM, GBM o Stacking pueden tomar más tiempo que modelos más simples como GLM o Naive Bayes.
 
-Si ya se ejecutó la limpieza y construcción de variables durante la sesión, no es necesario volver a correr esa parte. El `rundirectory` está diseñado para evitar repetir la preparación base y permitir que el usuario regrese al menú para ejecutar nuevos modelos de forma más eficiente.
+Si ya se ejecutó la limpieza y construcción de variables durante la sesión, no es necesario volver a correr esa parte. El `00_rundirectory.R` está diseñado para evitar repetir la preparación base y permitir que el usuario regrese al menú para ejecutar nuevos modelos de forma más eficiente.
 
 ## Resultados esperados
 
 La ejecución de los modelos genera resultados asociados al desempeño predictivo y, cuando corresponde, archivos de predicción para evaluación externa. Estos resultados permiten comparar el rendimiento de los distintos algoritmos y seleccionar el modelo con mejor desempeño de acuerdo con la métrica principal del proyecto.
 
 El criterio central de evaluación es el F1 score, ya que permite balancear precisión y sensibilidad en un problema donde los errores de clasificación tienen implicaciones relevantes para la focalización de hogares en condición de pobreza.
-
-```
-
-Dos ajustes importantes que hice:
-
-1. Cambié la descripción para que no diga solo “cinco algoritmos”, porque según la estructura que mostraste realmente están trabajando con **Elastic Net, LightGBM, Random Forest, Stacking, GLM, GBM y Naive Bayes**.
-
-2. Dejé la explicación del `rundirectory` en nivel usuario: qué hace, cómo se corre y qué recomendaciones seguir, sin entrar en detalles internos extensos del código.
-```

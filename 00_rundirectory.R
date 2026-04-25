@@ -200,6 +200,7 @@ opciones <- c(
   "LightGBM + Random Forest + Stacking",
   "Los 5 algoritmos requeridos (EN + LGBM + RF + GLM + Bayes)",
   "Los 5 requeridos + GBM + Stacking",
+  "LPM (Linear Probability Model)",
   "Salir"
 )
 
@@ -250,6 +251,7 @@ correr_modelos <- function(seleccion) {
   RUN_GBM           <- seleccion %in% c(1, 7, 12)
   RUN_BAYES         <- seleccion %in% c(1, 8, 11, 12)
   RUN_STACKING      <- seleccion %in% c(1, 10, 12)
+  RUN_LPM           <- seleccion %in% c(1, 13)
   
   cat("\nModelos seleccionados:\n")
   cat("  Descriptivo   :", RUN_DESCRIPTIVO,   "\n")
@@ -259,7 +261,8 @@ correr_modelos <- function(seleccion) {
   cat("  GLM           :", RUN_GLM,           "\n")
   cat("  GBM           :", RUN_GBM,           "\n")
   cat("  Naive Bayes   :", RUN_BAYES,         "\n")
-  cat("  Stacking      :", RUN_STACKING,      "\n\n")
+  cat("  Stacking      :", RUN_STACKING,      "\n")
+  cat("  LPM           :", RUN_LPM,           "\n\n")
   
   if (RUN_DESCRIPTIVO) {
     cat("\nCorriendo estadísticas descriptivas...\n")
@@ -296,6 +299,11 @@ correr_modelos <- function(seleccion) {
     source("01_code/09_Bayes.R", local = .GlobalEnv)
   }
   
+  if (RUN_LPM) {
+    cat("\nCorriendo LPM...\n")
+    source("01_code/11_LPM.R", local = .GlobalEnv)
+  }
+  
   if (RUN_STACKING) {
     cat("\nCorriendo Stacking...\n")
     source("01_code/06_Stacking.R", local = .GlobalEnv)
@@ -321,6 +329,7 @@ opciones <- c(
   "LightGBM + Random Forest + Stacking",
   "Los 5 algoritmos requeridos (EN + LGBM + RF + GLM + Bayes)",
   "Los 5 requeridos + GBM + Stacking",
+  "LPM (Linear Probability Model)",
   "Salir"
 )
 

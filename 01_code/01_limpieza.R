@@ -297,6 +297,13 @@ objetos_a_conservar <- c(
   # Rebindings de dplyr para que ganen contra MASS::select en el search path
   "select", "filter",
 
+  # Objetos y funciones definidos en 00_rundirectory.R (para que el menú
+  # siga funcionando después de la preparación de datos)
+  "correr_modelos", "preparar_datos",
+  "find_project_root", "set_project_wd", "install_if_missing",
+  "BASES_DIR", "FORZAR_PREPARACION", "FULL_RESET",
+  "opciones", "possible_bases_dirs", "required_packages",
+
   # Funciones (se conservan para poder seguir usando el script)
   "load_bases",
   "pre_process_personas",

@@ -549,6 +549,182 @@ cat("Modelo D guardado en:", path_D, "\n")
 
 
 # ============================================================
+# 5.5 Importancia de variables — Modelo C
+# ============================================================
+# lgb.importance devuelve tres métricas por feature:
+#   Gain      : reducción total de la función de pérdida aportada
+#               por los splits sobre esa variable (la más interpretable).
+#   Cover     : observaciones que pasaron por esos splits.
+#   Frequency : veces que la variable fue usada para partir.
+# Reportamos Gain normalizado (% del total) para el slide de deep dive.
+
+# --- Diccionario de etiquetas legibles para el slide ---
+labels_imp <- c(
+  # Demográficos del hogar
+  num_minors             = "Menores en el hogar",
+  num_women              = "Mujeres en el hogar",
+  num_occupied           = "Ocupados en el hogar",
+  n_personas             = "Tamaño del hogar",
+  prop_dependiente       = "Tasa de dependencia",
+  prop_mujeres           = "Prop. de mujeres",
+  prop_minoria_etn       = "Prop. minoría étnica",
+  persons_per_worker     = "Personas por ocupado",
+  minors_per_worker      = "Menores por ocupado",
+
+  # Vivienda
+  cuartos_por_persona    = "Cuartos por persona",
+  hacinamiento           = "Hacinamiento",
+  vivienda_precaria      = "Vivienda precaria",
+  sin_agua_red           = "Sin acceso a agua",
+  sin_sanitario          = "Sin sanitario",
+  zona_rural             = "Zona rural",
+  rent                   = "Vivienda en arriendo",
+  n_servicios            = "Nº servicios públicos",
+
+  # Educación
+  prop_educ_alta         = "Prop. con educación alta",
+  avg_educ_adultos       = "Educación promedio (adultos)",
+  jefe_anos_educ         = "Años de educación del jefe",
+  conyuge_anos_educ      = "Años de educación del cónyuge",
+  cat_maxEduc            = "Máx. nivel educativo del hogar",
+
+  # Empleo e informalidad
+  prop_informal          = "Tasa de informalidad",
+  tasa_desempleo_hogar   = "Tasa de desempleo del hogar",
+  prop_subempleado       = "Prop. subempleados",
+  sin_ocupados           = "Hogar sin ocupados",
+  formalHead             = "Jefe con empleo formal",
+  occupiedHead           = "Jefe ocupado",
+
+  # Perfil del jefe / cónyuge
+  jefe_edad              = "Edad del jefe",
+  jefe_cuenta_propia     = "Jefe cuenta propia",
+  jefe_horas             = "Horas trabajadas del jefe",
+  jefe_tam_empresa       = "Tamaño empresa del jefe",
+  jefe_meses_trabajo     = "Meses en trabajo actual (jefe)",
+  jefe_seg_trabajo       = "Jefe con segundo trabajo",
+  jefe_mujer             = "Jefe de hogar mujer",
+  jefe_sin_pension       = "Jefe sin pensión",
+  headWoman              = "Jefatura femenina",
+  mujer_jefe_ocup        = "Jefa ocupada",
+  conyuge_existe         = "Hogar con cónyuge",
+  conyuge_ocupado        = "Cónyuge ocupado",
+  conyuge_horas          = "Horas trabajadas del cónyuge",
+
+  # Horas a nivel hogar
+  horas_mean_hog         = "Horas trabajadas (promedio)",
+  horas_max_hog          = "Horas trabajadas (máx.)",
+  horas_sd_hog           = "Horas trabajadas (desv. est.)",
+  total_horas_hog        = "Total horas trabajadas",
+
+  # Empresa y estabilidad laboral
+  empresa_max_hog        = "Tamaño máx. empresa (hogar)",
+  empresa_mean_hog       = "Tamaño medio empresa (hogar)",
+  meses_trabajo_mean_hog = "Meses en trabajo (promedio)",
+  meses_trabajo_max_hog  = "Meses en trabajo (máx.)",
+  prop_seg_trabajo       = "Prop. con segundo trabajo",
+  horas_seg_trabajo_mean = "Horas segundo trabajo (prom.)",
+
+  # Ingresos y subsidios
+  prop_subsidiado        = "Afiliados al régimen subsidiado",
+  tiene_remesas          = "Recibe remesas",
+  tiene_pension_ing      = "Recibe ingreso por pensión",
+  total_primas_hogar     = "Total primas del hogar",
+  max_primas_persona     = "Máx. primas por persona",
+  total_ayudas_hogar     = "Total ayudas recibidas",
+  prop_p7500s2           = "Recibe pensión / jubilación",
+  prop_p7500s3           = "Recibe pensión alimenticia",
+  prop_p7505             = "Recibe transferencias / intereses (12m)",
+  prop_sub_transp        = "Recibe subsidio de transporte",
+  prop_sub_alim          = "Recibe subsidio de alimentación",
+  prop_sub_fam           = "Recibe subsidio familiar",
+  prop_sub_educ          = "Recibe subsidio educativo",
+  any_sub_mensual        = "Recibe algún subsidio mensual",
+  n_fuentes_ingreso      = "Nº de fuentes de ingreso",
+  prop_trabajo_sec       = "Prop. con trabajo secundario",
+
+  # Líneas de pobreza y unidades de gasto
+  lp_hogar               = "Línea de pobreza (hogar)",
+  li_hogar               = "Línea de indigencia (hogar)",
+  lp_pc                  = "Línea de pobreza per cápita",
+  li_pc                  = "Línea de indigencia per cápita",
+  npersug                = "Nº personas unidad de gasto",
+  nper_vs_ug             = "Personas hogar / unidad gasto",
+
+  # Geografía
+  Dominio                = "Dominio geográfico",
+  Depto                  = "Departamento",
+  Clase                  = "Zona (urbana/rural)",
+  dominio_te             = "Tasa de pobreza por dominio",
+
+  # Interacciones
+  int_rural_informal     = "Rural × informalidad",
+  int_educ_edad_jefe     = "Educación × edad del jefe",
+  int_hacin_servicios    = "Hacinamiento × servicios",
+  int_lppc_dependiente   = "Línea pob. p.c. × dependencia",
+  int_subsid_desempleo   = "Subsidiado × desempleo"
+)
+
+importance_C <- lgb.importance(model_C, percentage = TRUE) %>%
+  as.data.frame() %>%
+  arrange(desc(Gain)) %>%
+  mutate(
+    rank      = row_number(),
+    Gain_pct  = 100 * Gain,
+    Cover_pct = 100 * Cover,
+    Freq_pct  = 100 * Frequency,
+    Label     = ifelse(Feature %in% names(labels_imp),
+                       labels_imp[Feature], Feature)
+  )
+
+# --- Tabla completa a CSV ---
+dir.create(file.path("02_outputs", "tables"), recursive = TRUE,
+           showWarnings = FALSE)
+write.csv(importance_C,
+          file.path("02_outputs", "tables", "importance_lgbm_C.csv"),
+          row.names = FALSE)
+
+cat("\n--- Top 15 variables por Gain (Modelo C) ---\n")
+print(head(importance_C[, c("rank", "Feature", "Gain_pct",
+                            "Cover_pct", "Freq_pct")], 15))
+
+# --- Gráfico top 10 ---
+top_n_plot <- 10
+imp_plot <- importance_C %>% slice_head(n = top_n_plot)
+
+p_imp <- ggplot(imp_plot,
+                aes(x = reorder(Label, Gain_pct), y = Gain_pct)) +
+  geom_col(fill = "#d97706", alpha = 0.85) +
+  geom_text(aes(label = sprintf("%.1f%%", Gain_pct)),
+            hjust = -0.1, size = 3.2) +
+  coord_flip() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title    = "Importancia de variables — LightGBM Modelo C",
+    subtitle = sprintf("Top %d predictores por Gain (%% del total)", top_n_plot),
+    x = NULL, y = "Gain (% del total)",
+    caption  = "Fuente: DANE (GEIH/MESE). Elaboración propia."
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+dir.create(file.path("02_outputs", "figures"), recursive = TRUE,
+           showWarnings = FALSE)
+ggsave(
+  filename = file.path("02_outputs", "figures", "importance_lgbm_C.png"),
+  plot = p_imp, width = 8, height = 6, dpi = 300
+)
+
+cat("\nImportancia de variables exportada a:\n")
+cat("  02_outputs/tables/importance_lgbm_C.csv\n")
+cat("  02_outputs/figures/importance_lgbm_C.png\n\n")
+
+
+# ============================================================
 # 3E. Modelo E — Random search ampliado + OOF F1 directo
 # ============================================================
 # A diferencia de A–D (que seleccionan por AUC y luego ajustan

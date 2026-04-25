@@ -55,7 +55,6 @@ formula_lpm <- Pobre_num ~
   num_minors +
   prop_dependiente +
   prop_informal +
-  n_personas +
   headWoman +
   cat_educHead +
   cat_maxEduc +

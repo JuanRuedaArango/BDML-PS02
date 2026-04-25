@@ -49,6 +49,22 @@ set.seed(2025)
 # ============================================================
 # MODELO BASE GLM
 # ============================================================
+
+# ==========================================
+# CREAR VARIABLES FALTANTES EN train
+# ==========================================
+
+
+train <- train %>%
+  mutate(
+    n_personas = round(num_occupied + (prop_dependiente * pmax(num_occupied,1))),
+    formalHead = ifelse(occupiedHead == 1, 1, 0),
+    hogar_grande = ifelse(n_personas >= 5, 1, 0),
+    sin_ocupados = ifelse(num_occupied == 0, 1, 0),
+    persons_per_worker = n_personas / pmax(num_occupied, 1),
+    minors_per_worker = num_minors / pmax(num_occupied, 1)
+    )
+
 model_base <- train(
   Pobre ~
     num_minors +
@@ -716,6 +732,23 @@ dir.create(file.path("02_outputs", "predictions"),
 # ============================================================
 # MODELO A = model5
 # ============================================================
+
+# ==========================================
+# CREAR VARIABLES FALTANTES EN test
+# (mismas transformaciones que train)
+# ==========================================
+
+test <- test %>%
+  mutate(
+    
+    n_personas = round(num_occupied + (prop_dependiente * pmax(num_occupied,1))),
+    formalHead = ifelse(occupiedHead == 1, 1, 0),
+    hogar_grande = ifelse(n_personas >= 5, 1, 0),
+    sin_ocupados = ifelse(num_occupied == 0, 1, 0),
+    persons_per_worker = n_personas / pmax(num_occupied,1),
+    minors_per_worker = num_minors / pmax(num_occupied,1)
+    )
+
 pred_prob_A <- predict(model5, newdata = test, type = "prob")
 
 pred_class_A <- ifelse(
